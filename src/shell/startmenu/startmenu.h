@@ -11,9 +11,13 @@
 #include <QWidget>
 #include <QVector>
 
+#include "startmenu/tilebutton.h"
+
 class QListWidget;
 class QListWidgetItem;
+class QScrollArea;
 class QToolButton;
+class FlowLayout;
 
 namespace w10de {
 
@@ -35,12 +39,14 @@ private slots:
     void showPowerMenu();
 
 private:
+    void launchTile(const QString& exec);
     void launchApplication(QListWidgetItem* item);
     void rebuildAppList();
     QToolButton* makeSideButton(const QString& icon, const QString& text);
 
-    QListWidget* appGrid_ = nullptr;   // 磁贴区（6×按钮宽）
-    QListWidget* appList_ = nullptr;   // 应用列表列（5×按钮宽）
+    QWidget* tilesHost_ = nullptr;       // 磁贴流宿主（含 FlowLayout）
+    QListWidget* appList_ = nullptr;     // 应用列表列（5×按钮宽）
+    QVector<TileButton*> tiles_;         // 磁贴（尺寸可自由设置）
     QWidget* sidebar_ = nullptr;
     QToolButton* hamburgerBtn_ = nullptr;
     QToolButton* accountBtn_ = nullptr;

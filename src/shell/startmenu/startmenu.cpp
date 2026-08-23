@@ -5,15 +5,18 @@
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QListWidget>
 #include <QMenu>
 #include <QProcess>
 #include <QRegularExpression>
+#include <QScrollArea>
 #include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
 
 #include "startmenu/appmodel.h"
+#include "startmenu/flowlayout.h"
 #include "theme/colors.h"
 
 namespace w10de {
@@ -133,41 +136,39 @@ StartMenu::StartMenu(QWidget* parent) : QWidget(parent) {
     ll->addWidget(appList_, 1);
     root->addWidget(listHost);
 
-    // ---- 磁贴区（Win10：6×开始按钮宽，图标磁贴网格）----
+    // ---- 磁贴区（Win10：6×开始按钮宽，可滚动磁贴流）----
     auto* tileHost = new QWidget(this);
     tileHost->setFixedWidth(kTilesWidth);
     auto* tl = new QVBoxLayout(tileHost);
     tl->setContentsMargins(8, 12, 12, 12);
     tl->setSpacing(8);
 
-    appGrid_ = new QListWidget(tileHost);
-    appGrid_->setViewMode(QListView::IconMode);
-    appGrid_->setIconSize(QSize(48, 48));
-    appGrid_->setGridSize(QSize(100, 100));
-    appGrid_->setResizeMode(QListView::Adjust);
-    appGrid_->setMovement(QListView::Static);
-    appGrid_->setWordWrap(true);
-    appGrid_->setStyleSheet(QStringLiteral(
-        "QListWidget {"
-        "  background: transparent;"
-        "  border: none;"
-        "  color: %1;"
-        "  font-size: 12px;"
-        "}"
-        "QListWidget::item { padding: 4px; }"
-        "QListWidget::item:hover { background: %2; }"
-        "QListWidget::item:selected { background: %3; }")
-        .arg(theme::kTextPrimary.name(),
-             theme::kHoverBackground.name(),
-             theme::kPressedBackground.name()));
-    tl->addWidget(appGrid_, 1);
+    auto* tileTitle = new QLabel(QStringLiteral("磁贴"), tileHost);
+    tileTitle->setStyleSheet(QStringLiteral(
+        "QLabel { color: %1; font-size: 13px; font-weight: bold; }")
+        .arg(theme::kTextSecondary.name()));
+    tl->addWidget(tileTitle);
+
+    auto* scroll = new QScrollArea(tileHost);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setStyleSheet(QStringLiteral(
+        "QScrollArea { background: transparent; border: none; }"
+        "QScrollBar:vertical { background: transparent; width: 6px; }"
+        "QScrollBar::handle:vertical { background: %1; border-radius: 3px; }"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }")
+        .arg(theme::kHoverBackground.name()));
+    tilesHost_ = new QWidget(scroll);
+    tilesHost_->setStyleSheet(QStringLiteral("QWidget { background: transparent; }"));
+    auto* flow = new FlowLayout(tilesHost_, 8, 8);
+    flow->setContentsMargins(0, 0, 0, 0);
+    scroll->setWidget(tilesHost_);
+    tl->addWidget(scroll, 1);
     root->addWidget(tileHost);
 
     rebuildAppList();
 
-    // 磁贴与列表单击启动（Win10 交互）；不连 itemActivated 避免双击重复。
-    connect(appGrid_, &QListWidget::itemClicked,
-            this, &StartMenu::launchApplication);
+    // 磁贴点击启动；应用列表点击启动。
     connect(appList_, &QListWidget::itemClicked,
             this, &StartMenu::launchApplication);
 }
@@ -206,7 +207,7 @@ void StartMenu::toggle() {
     setVisible(!isVisible());
     if (isVisible()) {
         // 显示后请求键盘焦点（overlay 层已配置 keyboard-interactivity）。
-        appGrid_->setFocus();
+        appList_->setFocus();
         raise();
         activateWindow();
     }
@@ -260,6 +261,19 @@ void StartMenu::showPowerMenu() {
     }
 }
 
+void StartMenu::launchTile(const QString& exec) {
+    if (exec.isEmpty()) {
+        return;
+    }
+    // 分离式启动，不阻塞 shell。
+    const QStringList parts = QProcess::splitCommand(sanitizeExec(exec));
+    if (parts.isEmpty()) {
+        return;
+    }
+    QProcess::startDetached(parts.first(), parts.mid(1));
+    hide();  // 启动后收起开始菜单
+}
+
 void StartMenu::launchApplication(QListWidgetItem* item) {
     const QString exec = item->data(Qt::UserRole).toString();
     if (exec.isEmpty()) {
@@ -275,22 +289,37 @@ void StartMenu::launchApplication(QListWidgetItem* item) {
 }
 
 void StartMenu::rebuildAppList() {
-    appGrid_->clear();
     appList_->clear();
+    // 清空磁贴流（FlowLayout takeAt 删除 item 与 widget）。
+    if (auto* flow = qobject_cast<FlowLayout*>(tilesHost_->layout())) {
+        while (QLayoutItem* item = flow->takeAt(0)) {
+            delete item->widget();
+            delete item;
+        }
+    }
+    tiles_.clear();
     const QList<AppEntry> apps = scanDesktopApplications();
     for (const AppEntry& app : apps) {
-        // 磁贴区：图标 + 名称。
-        auto* tile = new QListWidgetItem(QIcon::fromTheme(app.icon), app.name);
-        tile->setData(Qt::UserRole, app.exec);
-        tile->setToolTip(app.name);
-        appGrid_->addItem(tile);
-
         // 应用列表列：文本行（Win10 全部应用）。
         auto* row = new QListWidgetItem(app.name);
         row->setData(Qt::UserRole, app.exec);
         row->setToolTip(app.name);
         appList_->addItem(row);
+
+        // 磁贴：默认中尺寸（右键可自由设置为小/大/宽）。
+        auto* tile = new TileButton(app.name, app.icon, app.exec, tilesHost_);
+        tile->setTileSize(TileButton::TileSize::Medium);
+        connect(tile, &TileButton::launchRequested,
+                this, &StartMenu::launchTile);
+        connect(tile, &TileButton::sizeChanged, tilesHost_, [this]() {
+            // 磁贴尺寸变化后重排（FlowLayout 依赖 sizeHint 变化）。
+            tilesHost_->layout()->invalidate();
+            tilesHost_->adjustSize();
+        });
+        qobject_cast<FlowLayout*>(tilesHost_->layout())->addWidget(tile);
+        tiles_.append(tile);
     }
+    tilesHost_->adjustSize();
 }
 
 }  // namespace w10de
