@@ -13,7 +13,7 @@ Linux 上的 Windows 10 风格桌面环境，从零实现。
 
 ## 状态
 
-**M0-M7 编码完成，WSL2（Arch）真实编译 + headless 冒烟验证通过**（2026-08：vendored wlroots 0.19 源码编译 + 5 帧渲染 + 截图 + 像素校验 `pixel verification passed`，中心像素 #0078D7）。
+**M0-M7 编码完成，WSL2（Arch）真实编译 + headless 冒烟 + 完整渲染验证通过**（2026-08：vendored wlroots 0.19 源码编译；`--frames 5` 截图像素校验 `pixel verification passed`；compositor+shell 同跑验证**桌面壁纸渐变 + 任务栏**渲染成功，238 色，底部 #2D2D2D 任务栏）。
 
 - [x] 技术调研与架构设计
 - [x] M0 项目骨架 + headless compositor 代码（未编译验证）
@@ -56,6 +56,7 @@ Linux 上的 Windows 10 风格桌面环境，从零实现。
       map/unmap/激活/关闭/最大化/最小化/configure、scene 集成、seat 命中、
       DISPLAY 环境注入）——未编译验证
 - [x] 编译与冒烟验证（headless 运行 + 截图 + 像素校验，2026-08 Arch/WSL2 通过）
+- [x] 完整渲染验证（compositor + w10shell 同跑：桌面壁纸渐变 + 任务栏渲染成功，2026-08）
 - [ ] M7 续：多工作区；XWayland 装饰/任务栏集成（M8）
 - [ ] M2b 标题栏文字渲染（cairo/pango）与交互打磨
 - [ ] M7 会话集成 / XWayland / 多工作区
@@ -132,6 +133,13 @@ WLR_BACKEND=wayland ./build/src/compositor/w10compositor --frames 0
 - **Qt API**：`QString::replace` 不支持 lambda 回调（sanitizeExec 改 globalMatch 手动拼接）；sniwatcher 补 `QDBusMessage` include 与 slot 声明
 
 **冒烟结果**：`w10compositor --frames 5 --screenshot` → 1920x1080 PNG + `pixel verification passed (center = #0078D7)`，退出码 0。
+
+**完整渲染验证**（compositor + w10shell 同跑，固定 socket）—— 又发现并修复：
+- **xdg-decoration 时序**：`set_mode(SERVER_SIDE)` 在 surface 未初始化时触发 `wlr_xdg_surface_schedule_configure` 断言崩溃（gdb 定位；Qt 在首 commit 前请求 decoration）→ 未初始化则挂 commit 监听延迟设置（单槽串行，MVP 够用）
+- **layer surface 死锁**：`arrangeLayers` 按 `mapped` 过滤导致**未 map 表面永远收不到首次 configure** 而无法 map（`wlr_layer_surface_v1_configure` 只 assert `initialized`）→ 仅按 `!initialized` 过滤
+- **layer-shell-qt / Qt 6.11 时序**：`show()` 后再 `Window::get()` 报 "already has a shell integration"（QPA 不允许事后切换）→ 改 `winId() → get/配置 → show()`；`useLayerShell()` 在 Qt 6.5+ 为废弃 no-op
+- **截图校验过时**：中心==纯背景色的 M0 假设在有 shell 内容时误判（壁纸渐变覆盖中心 #0073CD）→ 改为"内容多样性检测"（多色即通过，纯色才校验背景）
+- 结果：桌面壁纸渐变 + 任务栏（#2D2D2D）渲染成功，238 色采样，`pixel verification passed (content rendered)`
 
 ### 已知待验证项（编译时确认）
 

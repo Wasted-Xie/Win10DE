@@ -36,7 +36,7 @@
 | M7 | 会话集成（launcher/autostart/配置）、XWayland、多工作区 | ⬜ 未开始 |
 | M8 | 视觉打磨（圆角/阴影/动画/Aero Snap） | ⬜ 未开始 |
 
-**验证状态**：三轮子代理静态审查全部完成（共 92 问题：10 CRITICAL + 15 HIGH + 32 MEDIUM + 35 LOW，全部修复或标注，5 项可接受风险）。**2026-08 完成首次真实编译与 headless 冒烟**（WSL2 Arch：vendored wlroots 0.19 源码编译 + 三个二进制构建成功 + `--frames 5` 截图 `pixel verification passed` 中心 #0078D7，退出码 0）。编译期修复详见 README「首次真实编译」节；**vendored 头补丁**（wlr_scene.h `[static 4]`×2、xwayland.h `class`、wlr_layer_shell_v1.h `namespace` + 生成协议头 `namespace`）必须在新装/重装 wlroots 时再次应用。
+**验证状态**：三轮子代理静态审查全部完成（共 92 问题：10 CRITICAL + 15 HIGH + 32 MEDIUM + 35 LOW，全部修复或标注，5 项可接受风险）。**2026-08 完成首次真实编译 + headless 冒烟 + 完整渲染验证**（WSL2 Arch：vendored wlroots 0.19 源码编译 + 三个二进制构建成功；`--frames 5` 截图像素校验通过；compositor+w10shell 同跑验证**桌面壁纸渐变 + 任务栏（#2D2D2D）渲染成功**，退出码 0）。编译期与渲染期修复详见 README「首次真实编译/完整渲染验证」节；**vendored 头补丁**（wlr_scene.h `[static 4]`×2、xwayland.h `class`、wlr_layer_shell_v1.h `namespace` + 生成协议头 `namespace`）必须在新装/重装 wlroots 时再次应用。
 
 ---
 
@@ -125,6 +125,10 @@ w10shell（Qt 6 Widgets，layer-shell 客户端）
 | **wlr 头 `extern "C"` 包裹**（6 个头文件） | wlroots 头无 C++ 保护，C++ 解析头需手动包裹（server.cpp 原本已包） |
 | **XWayland 创建失败降级为警告**（不致命） | headless/WSL 无 X11 环境（`/tmp/.X11-unix` 只读挂载）下应继续运行；X11 客户端兼容缺失可接受 |
 | **headless 帧循环：每帧 `wlr_output_schedule_frame`** | headless 后端 frame timer 仅在 enable commit 时续期，不显式调度渲染停在第二帧（首编实测） |
+| **xdg-decoration 延迟 `set_mode`**（surface 未初始化时挂 commit 监听，单槽串行） | `wlr_xdg_toplevel_decoration_v1_set_mode` 无条件调 `schedule_configure`，surface 未初始化（客户端首 commit 前）断言崩溃——Qt 即此时序（渲染验证 gdb 定位） |
+| **`arrangeLayers` 仅按 `!initialized` 过滤**（不按 mapped） | 未 map 表面需要首次 configure 才能 map；按 mapped 过滤会死锁（Qt 层表面永远等不到 configure，渲染验证实测） |
+| **layer-shell-qt 时序：`winId() → get/配置 → show()`** | Qt 6.11 QPA 不允许 show 后切换 shell integration（"already has a shell integration"）；`useLayerShell()` 在 Qt 6.5+ 为废弃 no-op |
+| **截图校验：内容多样性检测**（多色即通过，纯色校验背景） | M0 的中心==纯背景假设在有 shell 内容时误判（壁纸渐变覆盖中心，实测 center=#0073CD） |
 
 ---
 

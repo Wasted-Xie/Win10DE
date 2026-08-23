@@ -408,9 +408,55 @@ void Compositor::handleNewDecoration(wl_listener* listener, void* data) {
     auto* decoration = static_cast<wlr_xdg_toplevel_decoration_v1*>(data);
     // 强制服务端装饰（Win10 统一标题栏）。客户端请求（request_mode）
     // 在本里程碑被忽略；M8 视觉打磨时支持客户端切换。
+    // 注意：set_mode 内部调用 wlr_xdg_surface_schedule_configure，在 surface
+    // 未初始化（客户端首次 commit 前）时断言 abort——真实运行验证：Qt 在
+    // 首 commit 前即请求 decoration。未初始化则挂 commit 监听延迟设置。
+    wlr_xdg_surface* xdgSurface = decoration->toplevel->base;
+    if (xdgSurface->initialized) {
+        wlr_xdg_toplevel_decoration_v1_set_mode(decoration,
+            WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+    } else {
+        compositor->pendingDecoration_ = decoration;
+        compositor->decorationCommitListener_.notify = handleDecorationCommit;
+        wl_signal_add(&xdgSurface->surface->events.commit,
+                      &compositor->decorationCommitListener_);
+        compositor->decorationDestroyListener_.notify = handleDecorationDestroy;
+        wl_signal_add(&decoration->events.destroy,
+                      &compositor->decorationDestroyListener_);
+    }
+    wlr_log(WLR_DEBUG, "toplevel decoration: server-side (direct or deferred)");
+}
+
+void Compositor::handleDecorationCommit(wl_listener* listener, void* /*data*/) {
+    auto* compositor = W10DE_CONTAINER_OF(listener, Compositor, decorationCommitListener_);
+    if (compositor->pendingDecoration_ == nullptr) {
+        return;
+    }
+    wlr_xdg_surface* xdgSurface = compositor->pendingDecoration_->toplevel->base;
+    if (!xdgSurface->initialized) {
+        return;  // 尚未初始化：继续等待下次 commit
+    }
+    // surface 已初始化：应用 SSD 并清理一次性监听。
+    wl_list_remove(&compositor->decorationCommitListener_.link);
+    wl_list_init(&compositor->decorationCommitListener_.link);
+    wl_list_remove(&compositor->decorationDestroyListener_.link);
+    wl_list_init(&compositor->decorationDestroyListener_.link);
+    wlr_xdg_toplevel_decoration_v1* decoration = compositor->pendingDecoration_;
+    compositor->pendingDecoration_ = nullptr;
     wlr_xdg_toplevel_decoration_v1_set_mode(decoration,
         WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
-    wlr_log(WLR_DEBUG, "toplevel decoration forced to server-side");
+}
+
+void Compositor::handleDecorationDestroy(wl_listener* listener, void* /*data*/) {
+    auto* compositor = W10DE_CONTAINER_OF(listener, Compositor, decorationDestroyListener_);
+    // pending decoration 在初始化前被销毁（客户端断开等）：清理监听。
+    if (compositor->pendingDecoration_ != nullptr) {
+        wl_list_remove(&compositor->decorationCommitListener_.link);
+        wl_list_init(&compositor->decorationCommitListener_.link);
+        wl_list_remove(&compositor->decorationDestroyListener_.link);
+        wl_list_init(&compositor->decorationDestroyListener_.link);
+        compositor->pendingDecoration_ = nullptr;
+    }
 }
 
 void Compositor::handleNewLayerSurface(wl_listener* listener, void* data) {
@@ -444,13 +490,16 @@ void Compositor::arrangeLayers() {
         wlr_box usableArea = fullArea;
         // 按层序（background → bottom → top → overlay）逐层排列；
         // 同层按加入顺序（列表顺序）。独占区逐层递减可用区域。
-        // 跳过未初始化（initialized==false，尚未首次 commit）与已 unmap 的
-        // 表面——wlr_layer_surface_v1_configure 内部 assert(initialized)。
+        // 只跳过未初始化（initialized==false，尚未首次 commit）的表面——
+        // wlr_layer_surface_v1_configure 仅 assert(initialized)；**未 map 的
+        // 表面也必须 arrange**（首次 configure 是客户端 attach buffer 从而
+        // map 的前提；若按 mapped 过滤会死锁——真实运行验证：Qt 层表面
+        // 永远等不到 configure 而无法 map）。
         for (int layer = ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND;
                 layer <= ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY; ++layer) {
             for (LayerSurface* ls : layerSurfaces_) {
                 wlr_layer_surface_v1* l = ls->layer();
-                if (!l->initialized || !l->surface->mapped) {
+                if (!l->initialized) {
                     continue;
                 }
                 if (l->output == output &&

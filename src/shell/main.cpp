@@ -26,7 +26,10 @@
 namespace {
 
 // 配置 layer-shell 窗口（layer-shell-qt 绑定）。
-// 注：配置时序（show 前/后）在不同版本可能有差异，M3 实现时验证。
+// Qt 6.11 验证：shell integration 必须在窗口 surface 创建（show）前设置，
+// show 后再 Window::get 会失败（"already has a shell integration"，真实
+// 运行验证）。正确时序：winId() 创建 QWindow（不创建 surface）→ get 绑定
+// layer-shell 并配置 → 最后 show()。
 void configureLayerWindow(QWidget* widget, const QString& scope,
                           LayerShellQt::Window::Layer layer,
                           LayerShellQt::Window::Anchors anchors,
@@ -34,7 +37,7 @@ void configureLayerWindow(QWidget* widget, const QString& scope,
                           const QMargins& margins,
                           LayerShellQt::Window::KeyboardInteractivity keyboard =
                               LayerShellQt::Window::KeyboardInteractivityOnDemand) {
-    widget->show();
+    widget->winId();
     if (QWindow* win = widget->windowHandle()) {
         if (LayerShellQt::Window* layerWindow = LayerShellQt::Window::get(win)) {
             layerWindow->setScope(scope);
@@ -45,6 +48,7 @@ void configureLayerWindow(QWidget* widget, const QString& scope,
             layerWindow->setKeyboardInteractivity(keyboard);
         }
     }
+    widget->show();
 }
 
 }  // namespace

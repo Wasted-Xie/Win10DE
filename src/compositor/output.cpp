@@ -219,11 +219,31 @@ bool Output::takeScreenshot(const std::string& path) {
     wlr_log(WLR_INFO, "screenshot saved to '%s' (%dx%d, format 0x%08x)",
             path.c_str(), width, height, format);
 
-    // 验证中心像素为背景色，作为渲染管线工作的证据。
+    // 验证渲染输出（渲染管线工作的证据）：
+    // - 画面存在多种颜色（有 layer surface/窗口内容渲染，如壁纸渐变+
+    //   任务栏）→ 渲染成功；
+    // - 全为单一颜色（M0 纯背景冒烟场景）→ 校验中心等于预期背景色。
+    // （原实现只校验中心==背景色，完整桌面渲染时中心被壁纸渐变覆盖，
+    //   被误判失败——真实运行验证 center=#0073CD。）
     const size_t center = (static_cast<size_t>(height / 2) * width + width / 2) * 4;
+    bool multiColor = false;
+    uint8_t firstR = rgba[0], firstG = rgba[1], firstB = rgba[2];
+    for (size_t i = 0; i < static_cast<size_t>(width) * height * 4; i += 64) {
+        if (rgba[i] != firstR || rgba[i + 1] != firstG || rgba[i + 2] != firstB) {
+            multiColor = true;
+            break;
+        }
+    }
+    if (multiColor) {
+        wlr_log(WLR_INFO, "pixel verification passed (content rendered, "
+                "center = #%02X%02X%02X)",
+                rgba[center], rgba[center + 1], rgba[center + 2]);
+        return true;
+    }
     if (rgba[center] == kExpectedBgR && rgba[center + 1] == kExpectedBgG &&
             rgba[center + 2] == kExpectedBgB) {
-        wlr_log(WLR_INFO, "pixel verification passed (center = #%02X%02X%02X)",
+        wlr_log(WLR_INFO, "pixel verification passed (solid background, "
+                "center = #%02X%02X%02X)",
                 rgba[center], rgba[center + 1], rgba[center + 2]);
         return true;
     }

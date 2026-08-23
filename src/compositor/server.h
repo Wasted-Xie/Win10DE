@@ -138,6 +138,8 @@ private:
     static void handleNewInput(wl_listener* listener, void* data);
     static void handleNewToplevel(wl_listener* listener, void* data);
     static void handleNewDecoration(wl_listener* listener, void* data);
+    static void handleDecorationCommit(wl_listener* listener, void* data);
+    static void handleDecorationDestroy(wl_listener* listener, void* data);
     static void handleNewLayerSurface(wl_listener* listener, void* data);
     static void handleNewLock(wl_listener* listener, void* data);
     static void handleLockNewSurface(wl_listener* listener, void* data);
@@ -189,6 +191,11 @@ private:
     wl_listener newInputListener_ = {};
     wl_listener newToplevelListener_ = {};
     wl_listener newDecorationListener_ = {};
+    // xdg-decoration：set_mode 在 surface 未初始化时断言（schedule_configure），
+    // 未初始化则挂 commit/destroy 监听延迟设置（单槽串行，MVP 够用）。
+    wl_listener decorationCommitListener_ = {};
+    wl_listener decorationDestroyListener_ = {};
+    wlr_xdg_toplevel_decoration_v1* pendingDecoration_ = nullptr;
     wl_listener newLayerSurfaceListener_ = {};
     wl_listener newLockListener_ = {};
     wl_listener lockNewSurfaceListener_ = {};
