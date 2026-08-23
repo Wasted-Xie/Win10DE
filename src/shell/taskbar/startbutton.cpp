@@ -10,8 +10,8 @@ StartButton::StartButton(QWidget* parent) : QPushButton(parent) {
     const QIcon distroLogo(QStringLiteral("/usr/share/pixmaps/archlinux-logo.svg"));
     if (!distroLogo.isNull()) {
         setIcon(distroLogo);
-        // 图标 1:1 且与任务栏同高（kTaskbarHeight=48），大小固定不变。
-        setIconSize(QSize(theme::kTaskbarHeight, theme::kTaskbarHeight));
+        // 图标保持原本大小不变（26x26）；按钮本体 1:1 与任务栏同高。
+        setIconSize(QSize(26, 26));
     } else {
         setText(QStringLiteral("开始"));
     }
