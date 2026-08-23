@@ -1,0 +1,2 @@
+# 所有文本文件统一 LF 行尾（Linux 目标；防止 Windows 检出 CRLF 破坏 bash 脚本）
+* text=auto eol=lf

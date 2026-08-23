@@ -1,0 +1,11 @@
+# Win10DE 配置示例
+# 复制到 ~/.config/w10de/config.ini 后按需修改（# 开头为注释）。
+
+# [output]：合成器输出（headless 后端生效；DRM/嵌套后端由系统决定）
+[output]
+width = 1920
+height = 1080
+
+# [wallpaper]：桌面壁纸图片路径（w10shell 读取；缺省用内置渐变）
+[wallpaper]
+# path = /usr/share/backgrounds/w10de-default.png

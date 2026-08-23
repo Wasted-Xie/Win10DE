@@ -1,0 +1,25 @@
+# 构建产物
+build/
+cmake-build-*/
+
+# 编辑器/IDE
+.vscode/
+.idea/
+*.swp
+*.sln
+*.vcxproj*
+
+# 编译中间文件
+*.o
+*.obj
+*.a
+*.so
+*.dll
+
+# 测试/运行产物
+*.png
+*.log
+
+# 系统
+.DS_Store
+Thumbs.db

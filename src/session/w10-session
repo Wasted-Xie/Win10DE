@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+# w10-session —— Win10DE 会话启动器（M7）
+#
+# 启动顺序：compositor（固定 socket）→ 等待就绪 → w10shell（桌面/任务栏/
+# 开始菜单/托盘）。任一方退出则整个会话结束。
+#
+# 用法：
+#   w10-session [--wallpaper <path>] [--backend <headless|wayland|drm>]
+# 环境变量：
+#   W10DE_BIN_DIR   二进制目录（默认本脚本所在目录）
+#   WLR_BACKEND     后端（默认 drm；脚本内可用 --backend 覆盖）
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+BIN_DIR="${W10DE_BIN_DIR:-$SCRIPT_DIR}"
+
+BACKEND="${WLR_BACKEND:-drm}"
+WALLPAPER=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --wallpaper)
+      [[ $# -ge 2 ]] || { echo "--wallpaper 需要参数" >&2; exit 1; }
+      WALLPAPER="$2"
+      shift 2
+      ;;
+    --backend)
+      [[ $# -ge 2 ]] || { echo "--backend 需要参数" >&2; exit 1; }
+      case "$2" in
+        headless|wayland|drm) BACKEND="$2" ;;
+        *) echo "无效 backend: $2（headless|wayland|drm）" >&2; exit 1 ;;
+      esac
+      shift 2
+      ;;
+    --help)
+      echo "用法: $0 [--wallpaper <path>] [--backend <headless|wayland|drm>]"
+      exit 0
+      ;;
+    *)
+      echo "未知参数: $1" >&2
+      exit 1
+      ;;
+  esac
+done
+
+# 固定 socket 名（按用户隔离）。
+SOCKET_NAME="wayland-w10de-$(id -u)"
+
+COMPOSITOR_PID=""
+SHELL_PID=""
+
+cleanup() {
+  # 每条 kill 追加 || true：set -e 下 trap 内失败会中断剩余清理。
+  [[ -n "$SHELL_PID" ]] && { kill "$SHELL_PID" 2>/dev/null || true; }
+  [[ -n "$COMPOSITOR_PID" ]] && { kill "$COMPOSITOR_PID" 2>/dev/null || true; }
+  wait 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
+
+# 1. 启动 compositor。
+export WLR_BACKEND="$BACKEND"
+export WAYLAND_DISPLAY="$SOCKET_NAME"
+echo "[w10-session] starting compositor (backend=$BACKEND, socket=$SOCKET_NAME)"
+"$BIN_DIR/w10compositor" --socket "$SOCKET_NAME" --verbose &
+COMPOSITOR_PID=$!
+
+# 2. 等待 socket 就绪（最多 5 秒）。
+RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+for _ in $(seq 1 50); do
+  if [[ -S "$RUNTIME_DIR/$SOCKET_NAME" ]]; then
+    break
+  fi
+  if ! kill -0 "$COMPOSITOR_PID" 2>/dev/null; then
+    echo "[w10-session] compositor exited early" >&2
+    exit 1
+  fi
+  sleep 0.1
+done
+if [[ ! -S "$RUNTIME_DIR/$SOCKET_NAME" ]]; then
+  echo "[w10-session] compositor socket not ready" >&2
+  exit 1
+fi
+echo "[w10-session] compositor ready on $SOCKET_NAME"
+
+# 3. 启动 shell（桌面/任务栏/开始菜单/托盘）。
+SHELL_ARGS=()
+if [[ -n "$WALLPAPER" ]]; then
+  SHELL_ARGS+=(--wallpaper "$WALLPAPER")
+fi
+echo "[w10-session] starting shell"
+"$BIN_DIR/w10shell" "${SHELL_ARGS[@]}" &
+SHELL_PID=$!
+
+# 3.1 autostart（~/.config/autostart/*.desktop 的 Exec；M7 简易版）。
+AUTOSTART_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
+if [[ -d "$AUTOSTART_DIR" ]]; then
+  for desktop in "$AUTOSTART_DIR"/*.desktop; do
+    [[ -f "$desktop" ]] || continue
+    exec_cmd="$(sed -n 's/^[[:space:]]*Exec=//p' "$desktop" | head -n1)"
+    [[ -z "$exec_cmd" ]] && continue
+    echo "[w10-session] autostart: $exec_cmd"
+    # 分离执行（不阻塞会话）。
+    (eval "$exec_cmd" >/dev/null 2>&1 &)
+  done
+fi
+
+# 4. 等待任一方退出（compositor 或 shell 崩溃都结束会话）。
+EXIT_CODE=0
+while true; do
+  if ! kill -0 "$COMPOSITOR_PID" 2>/dev/null; then
+    echo "[w10-session] compositor exited"
+    EXIT_CODE=1   # compositor 提前退出视为异常
+    break
+  fi
+  if ! kill -0 "$SHELL_PID" 2>/dev/null; then
+    echo "[w10-session] shell exited"
+    EXIT_CODE=1
+    break
+  fi
+  sleep 0.5
+done
+exit "$EXIT_CODE"
