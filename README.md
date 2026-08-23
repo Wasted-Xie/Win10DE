@@ -140,7 +140,7 @@ WLR_BACKEND=wayland ./build/src/compositor/w10compositor --frames 0
 - **layer-shell-qt / Qt 6.11 时序**：`show()` 后再 `Window::get()` 报 "already has a shell integration"（QPA 不允许事后切换）→ 改 `winId() → get/配置 → show()`；`useLayerShell()` 在 Qt 6.5+ 为废弃 no-op
 - **截图校验过时**：中心==纯背景色的 M0 假设在有 shell 内容时误判（壁纸渐变覆盖中心 #0073CD）→ 改为"内容多样性检测"（多色即通过，纯色才校验背景）
 - **开始按钮发行版图标**：`/usr/share/pixmaps/archlinux-logo.svg`（Arch 品牌蓝 #1793D1 渲染确认），缺失回退"开始"文字；按钮 48×48 正方形（1:1、与任务栏同高）、`padding:0` 贴屏幕最左（按钮左缘 x=0 实测），**图标保持原本 26×26 大小固定不变**（按钮内居中）
-- **开始菜单 Win10 布局重构**（渲染验证）：左侧窄栏 48px（#171717 略深）——顶部 ☰ 汉堡按钮（点击展开/折叠，展开 200px 显示文字标签）、底部功能区（账户 → 设置/文档/图片 → 电源按钮最底）；电源按钮弹出关机/重启/睡眠菜单（菜单宽与侧栏等宽，MVP 动作占位）；主区应用磁贴网格
+- **开始菜单 Win10 布局重构**（渲染验证）：三列——左侧窄栏 48px（#171717 略深，顶部 ☰ 汉堡展开/折叠 200px、底部功能区：账户→设置/文档/图片→电源最底，电源弹关机/重启/睡眠菜单 MVP 占位）、**应用列表列 240px（5×开始按钮宽）**、**磁贴区 288px（6×开始按钮宽）**；总宽 576（x=48/576 分区边界实测精确）
 - **开始菜单与任务栏对齐**：`margin.bottom` 从 kTaskbarHeight 改为 **0**——overlay 层 bounds 是可用区（已排除任务栏独占区），双重避让导致 49px 空隙（实测 49px→1px）
 - 结果：桌面壁纸渐变 + 任务栏（#2D2D2D）渲染成功，238 色采样，`pixel verification passed (content rendered)`
 

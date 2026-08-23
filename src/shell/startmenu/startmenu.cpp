@@ -43,7 +43,7 @@ QString sanitizeExec(const QString& exec) {
 }  // namespace
 
 StartMenu::StartMenu(QWidget* parent) : QWidget(parent) {
-    setMinimumSize(480, 600);
+    setMinimumSize(kSidebarWidth + kAppListWidth + kTilesWidth, 600);
     setStyleSheet(QStringLiteral("QWidget { background: %1; }")
                       .arg(theme::kStartMenuBackground.name()));
 
@@ -109,16 +109,41 @@ StartMenu::StartMenu(QWidget* parent) : QWidget(parent) {
 
     root->addWidget(sidebar_);
 
-    // ---- 主区域：应用磁贴网格（Win10 风格：大图标 + 名称）----
-    auto* content = new QWidget(this);
-    auto* cl = new QVBoxLayout(content);
-    cl->setContentsMargins(12, 12, 12, 12);
-    cl->setSpacing(8);
+    // ---- 应用列表列（Win10：5×开始按钮宽，全部应用文本列表）----
+    auto* listHost = new QWidget(this);
+    listHost->setFixedWidth(kAppListWidth);
+    auto* ll = new QVBoxLayout(listHost);
+    ll->setContentsMargins(0, 0, 0, 0);
+    ll->setSpacing(0);
 
-    appGrid_ = new QListWidget(content);
+    appList_ = new QListWidget(listHost);
+    appList_->setStyleSheet(QStringLiteral(
+        "QListWidget {"
+        "  background: transparent;"
+        "  border: none;"
+        "  color: %1;"
+        "  font-size: 13px;"
+        "}"
+        "QListWidget::item { padding: 6px 8px; }"
+        "QListWidget::item:hover { background: %2; }"
+        "QListWidget::item:selected { background: %3; }")
+        .arg(theme::kTextPrimary.name(),
+             theme::kHoverBackground.name(),
+             theme::kPressedBackground.name()));
+    ll->addWidget(appList_, 1);
+    root->addWidget(listHost);
+
+    // ---- 磁贴区（Win10：6×开始按钮宽，图标磁贴网格）----
+    auto* tileHost = new QWidget(this);
+    tileHost->setFixedWidth(kTilesWidth);
+    auto* tl = new QVBoxLayout(tileHost);
+    tl->setContentsMargins(8, 12, 12, 12);
+    tl->setSpacing(8);
+
+    appGrid_ = new QListWidget(tileHost);
     appGrid_->setViewMode(QListView::IconMode);
     appGrid_->setIconSize(QSize(48, 48));
-    appGrid_->setGridSize(QSize(110, 110));
+    appGrid_->setGridSize(QSize(100, 100));
     appGrid_->setResizeMode(QListView::Adjust);
     appGrid_->setMovement(QListView::Static);
     appGrid_->setWordWrap(true);
@@ -135,13 +160,15 @@ StartMenu::StartMenu(QWidget* parent) : QWidget(parent) {
         .arg(theme::kTextPrimary.name(),
              theme::kHoverBackground.name(),
              theme::kPressedBackground.name()));
-    cl->addWidget(appGrid_, 1);
-    root->addWidget(content, 1);
+    tl->addWidget(appGrid_, 1);
+    root->addWidget(tileHost);
 
     rebuildAppList();
 
-    // 磁贴单击启动（Win10 交互）；不连 itemActivated 避免双击重复启动。
+    // 磁贴与列表单击启动（Win10 交互）；不连 itemActivated 避免双击重复。
     connect(appGrid_, &QListWidget::itemClicked,
+            this, &StartMenu::launchApplication);
+    connect(appList_, &QListWidget::itemClicked,
             this, &StartMenu::launchApplication);
 }
 
@@ -249,12 +276,20 @@ void StartMenu::launchApplication(QListWidgetItem* item) {
 
 void StartMenu::rebuildAppList() {
     appGrid_->clear();
+    appList_->clear();
     const QList<AppEntry> apps = scanDesktopApplications();
     for (const AppEntry& app : apps) {
-        auto* item = new QListWidgetItem(QIcon::fromTheme(app.icon), app.name);
-        item->setData(Qt::UserRole, app.exec);
-        item->setToolTip(app.name);
-        appGrid_->addItem(item);
+        // 磁贴区：图标 + 名称。
+        auto* tile = new QListWidgetItem(QIcon::fromTheme(app.icon), app.name);
+        tile->setData(Qt::UserRole, app.exec);
+        tile->setToolTip(app.name);
+        appGrid_->addItem(tile);
+
+        // 应用列表列：文本行（Win10 全部应用）。
+        auto* row = new QListWidgetItem(app.name);
+        row->setData(Qt::UserRole, app.exec);
+        row->setToolTip(app.name);
+        appList_->addItem(row);
     }
 }
 
