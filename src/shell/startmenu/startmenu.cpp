@@ -136,12 +136,12 @@ StartMenu::StartMenu(QWidget* parent) : QWidget(parent) {
     ll->addWidget(appList_, 1);
     root->addWidget(listHost);
 
-    // ---- 磁贴区（Win10：6×开始按钮宽，可滚动磁贴流）----
+    // ---- 磁贴区（Win10：6 小磁贴宽 + 7×4px 间隙 = 316px，可滚动磁贴流）----
     auto* tileHost = new QWidget(this);
     tileHost->setFixedWidth(kTilesWidth);
     auto* tl = new QVBoxLayout(tileHost);
-    // 左右边距 0：288px 正好容纳 3 个中尺寸磁贴（3×96，Win10 无缝磁贴）。
-    tl->setContentsMargins(0, 12, 0, 12);
+    // 左右边距 4px（磁贴与磁贴区边缘间隔，小磁贴网格标准）。
+    tl->setContentsMargins(4, 12, 4, 12);
     tl->setSpacing(8);
 
     auto* scrollTitle = new QLabel(QStringLiteral("磁贴"), tileHost);
@@ -154,8 +154,8 @@ StartMenu::StartMenu(QWidget* parent) : QWidget(parent) {
     // 100px 宽会在显示时序中反复覆盖布局，导致磁贴垂直堆叠——真实运行验证）。
     tilesHost_ = new QWidget(tileHost);
     tilesHost_->setStyleSheet(QStringLiteral("QWidget { background: transparent; }"));
-    // 水平间距 0：中磁贴 3×96=288 正好排满一行（Win10 无缝磁贴网格）。
-    auto* flow = new FlowLayout(tilesHost_, 0, 8);
+    // 小磁贴网格标准：磁贴间隔 4px（水平），行间距 4px（垂直）。
+    auto* flow = new FlowLayout(tilesHost_, 4, 4);
     flow->setContentsMargins(0, 0, 0, 0);
     tl->addWidget(tilesHost_, 1);
     root->addWidget(tileHost);

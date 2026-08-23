@@ -42,11 +42,14 @@ TileButton::TileButton(const QString& name, const QString& iconName,
 }
 
 QSize TileButton::tileSizeHint() const {
+    // 网格基准：小磁贴 48px + 4px 间隔。
+    // 中 = 2 小 + 1 间隔（100×100）；大 = 4 小 + 3 间隔（204×204）；
+    // 宽 = 4 小 + 3 间隔 × 2 小 + 1 间隔（204×100）。
     switch (size_) {
     case TileSize::Small: return QSize(48, 48);
-    case TileSize::Medium: return QSize(96, 96);
-    case TileSize::Large: return QSize(192, 192);
-    case TileSize::Wide: return QSize(192, 96);
+    case TileSize::Medium: return QSize(100, 100);
+    case TileSize::Large: return QSize(204, 204);
+    case TileSize::Wide: return QSize(204, 100);
     }
     return QSize(48, 48);
 }
@@ -96,9 +99,9 @@ void TileButton::contextMenuEvent(QContextMenuEvent* event) {
              theme::kHoverBackground.name(),
              theme::kPressedBackground.name()));
     QAction* small = menu.addAction(QStringLiteral("小 (48×48)"));
-    QAction* medium = menu.addAction(QStringLiteral("中 (96×96)"));
-    QAction* large = menu.addAction(QStringLiteral("大 (192×192)"));
-    QAction* wide = menu.addAction(QStringLiteral("宽 (192×96)"));
+    QAction* medium = menu.addAction(QStringLiteral("中 (100×100)"));
+    QAction* large = menu.addAction(QStringLiteral("大 (204×204)"));
+    QAction* wide = menu.addAction(QStringLiteral("宽 (204×100)"));
     QAction* chosen = menu.exec(event->globalPos());
     TileSize next = size_;
     if (chosen == small) {

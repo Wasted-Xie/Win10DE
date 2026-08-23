@@ -58,7 +58,7 @@ private:
     static constexpr int kSidebarExpandedWidth = 200;    // 展开：显示文字标签
     static constexpr int kSidebarButtonHeight = 48;
     static constexpr int kAppListWidth = 5 * 48;         // 应用列表列
-    static constexpr int kTilesWidth = 6 * 48;           // 磁贴区
+    static constexpr int kTilesWidth = 6 * 48 + 28;      // 磁贴区：6 小磁贴 + 7×4px 间隙
 };
 
 }  // namespace w10de
