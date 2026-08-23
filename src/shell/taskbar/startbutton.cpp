@@ -10,18 +10,23 @@ StartButton::StartButton(QWidget* parent) : QPushButton(parent) {
     const QIcon distroLogo(QStringLiteral("/usr/share/pixmaps/archlinux-logo.svg"));
     if (!distroLogo.isNull()) {
         setIcon(distroLogo);
-        setIconSize(QSize(26, 26));
+        // 图标 1:1 且与任务栏同高（kTaskbarHeight=48），大小固定不变。
+        setIconSize(QSize(theme::kTaskbarHeight, theme::kTaskbarHeight));
     } else {
         setText(QStringLiteral("开始"));
     }
-    setFixedWidth(64);
+    // 正方形按钮（1:1，与任务栏同高），贴任务栏最左（布局无外边距）。
+    setFixedSize(theme::kTaskbarHeight, theme::kTaskbarHeight);
     setCursor(Qt::PointingHandCursor);
     // Win10 扁平按钮：默认透明，hover 深灰，按下更深。
+    // padding:0 消除 QPushButton 默认内容边距（图标贴屏幕最左，
+    // 实测默认 3px 间隙）。
     setStyleSheet(QStringLiteral(
         "QPushButton {"
         "  color: %1;"
         "  background: transparent;"
         "  border: none;"
+        "  padding: 0;"
         "  font-size: 13px;"
         "}"
         "QPushButton:hover { background: %2; }"
