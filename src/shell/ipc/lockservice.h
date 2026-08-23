@@ -10,6 +10,9 @@ namespace w10de {
 
 class LockService : public QObject {
     Q_OBJECT
+    // D-Bus 接口名必须显式声明：默认是类全名（w10de.LockService），
+    // 外部 dbus-send --dest=org.w10de.Shell 调用会失败（实测验证）。
+    Q_CLASSINFO("D-Bus Interface", "org.w10de.Shell")
 public:
     explicit LockService(QObject* parent = nullptr);
 

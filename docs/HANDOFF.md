@@ -133,6 +133,7 @@ w10shell（Qt 6 Widgets，layer-shell 客户端）
 | **开始菜单 `margin.bottom=0`**（overlay 层） | overlay 层 bounds 是可用区（已排除任务栏独占区），再设底边距会双重避让——实测菜单与任务栏间 49px 空隙，改为 0 后 1px |
 | **开始按钮 = 发行版 logo**（`/usr/share/pixmaps/archlinux-logo.svg`，缺失回退文字） | 系统发行版图标替代"开始"文字（Arch 蓝 #1793D1 实测渲染）；按钮 48×48 正方形（1:1 与任务栏同高）贴左（x=0 实测），图标保持原本 26×26 固定、按钮内居中 |
 | **开始菜单 Win10 布局**：三列——左侧 48px 窄栏（#171717：☰ 汉堡展开/折叠 200px、底部功能区账户→设置/文档/图片→电源最底，电源弹关机/重启/睡眠菜单与侧栏等宽 MVP 占位）、应用列表列 240px（5×按钮宽）、磁贴区 288px（6×按钮宽），总宽 576 | 与 Win10 UI 对齐（渲染验证 x=48/576 分区边界精确、三列 74/129/197 色）；账户/设置动作与真实关机为后续里程碑（PAM/systemctl） |
+| **电源/账户接线**：电源菜单执行 systemctl（poweroff/reboot/suspend）；账户按钮 → D-Bus org.w10de.Shell.Lock → w10lock（首次端到端验证：busctl 调用→w10lock→compositor session locked） | **LockService 需 Q_CLASSINFO("D-Bus Interface","org.w10de.Shell")**（默认接口名是类名，外部调用不到——实测）；w10lock 定位 PATH 优先 + /usr/local/bin 兜底 |
 | **磁贴四种尺寸**（`TileButton`+`FlowLayout`，右键菜单自由设置）：小 48×48 / 中 **100×100**（默认）/ 大 **204×204** / 宽 **204×100**；磁贴区 **316px**（6 小磁贴+7×4 间隙，边缘 4px）、水平/行间距 4px、每行 3 个中磁贴（实测 100px、4px 间隙/边缘精确） | Win10 磁贴大小，4px 网格基准（中=2 小+1 间隙、大=4 小+3 间隙）；**FlowLayout 宽度取父 widget 实际宽度**（setGeometry rect 在 layer-shell 时序中不稳——真实运行验证）；尺寸变化触发重排 |
 
 ---
@@ -225,7 +226,8 @@ third_party/
 
 ### 7.2 行为待验证
 - ✅ headless 冒烟已通过（2026-08：`pixel verification passed`，#0078D7，退出码 0）。
-- ⬜ 嵌套验证（wayland backend + WSLg/weston）：开窗口、拖动、标题栏按钮、任务栏窗口列表、开始菜单、锁屏（Win+L）。
+- ✅ 锁屏链端到端（2026-08：busctl 调 org.w10de.Shell.Lock → w10lock 启动 → compositor `session locked`）；剩余：锁屏画面渲染与任意键解锁的真机确认。
+- ⬜ 嵌套验证（wayland backend + WSLg/weston）：开窗口、拖动、标题栏按钮、任务栏窗口列表、开始菜单交互、电源菜单 systemctl 实测（WSL 可测，勿真关机）。
 - ⬜ XWayland：WSL 中 `/tmp/.X11-unix` 为只读挂载导致 wlr_xwayland 创建失败（已降级为警告）；真机验证 X11 客户端。
 - ⬜ DRM 真机：headless 之外的后端需真机/KVM。
 

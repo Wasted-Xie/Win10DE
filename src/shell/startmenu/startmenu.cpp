@@ -1,5 +1,7 @@
 #include "startmenu/startmenu.h"
 
+#include <QDBusConnection>
+#include <QDBusInterface>
 #include <QDesktopServices>
 #include <QDir>
 #include <QHBoxLayout>
@@ -10,7 +12,7 @@
 #include <QMenu>
 #include <QProcess>
 #include <QRegularExpression>
-#include <QScrollArea>
+#include <QStandardPaths>
 #include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -75,8 +77,19 @@ StartMenu::StartMenu(QWidget* parent) : QWidget(parent) {
     accountBtn_ = makeSideButton(QStringLiteral("user-identity"),
                                  QStringLiteral("账户"));
     connect(accountBtn_, &QToolButton::clicked, this, [this]() {
-        // MVP 占位：账户/锁定/注销菜单为后续里程碑（PAM）。
-        qInfo() << "startmenu: account clicked (TODO)";
+        // 账户按钮 → 锁屏联动：D-Bus 调 org.w10de.Shell.Lock()
+        // （与外部 dbus-send 触发同路径；LockService 启动 w10lock）。
+        if (QDBusConnection::sessionBus().isConnected()) {
+            QDBusInterface iface(QStringLiteral("org.w10de.Shell"),
+                                 QStringLiteral("/Shell"),
+                                 QStringLiteral("org.w10de.Shell"),
+                                 QDBusConnection::sessionBus());
+            if (iface.isValid()) {
+                iface.call(QStringLiteral("Lock"));
+            } else {
+                qWarning() << "startmenu: org.w10de.Shell not available";
+            }
+        }
     });
     sb->addWidget(accountBtn_);
 
@@ -245,13 +258,19 @@ void StartMenu::showPowerMenu() {
     // 在电源按钮上方弹出。
     QAction* chosen = menu.exec(
         powerBtn_->mapToGlobal(QPoint(0, -menu.sizeHint().height())));
-    // MVP：动作占位（真机接入 systemctl/PAM 为后续里程碑）。
+
+    // 电源动作：systemd（systemctl）。无 systemd 环境（如 WSL）仅告警。
+    const QString systemctl = QStandardPaths::findExecutable(QStringLiteral("systemctl"));
+    if (systemctl.isEmpty()) {
+        qWarning() << "startmenu: systemctl not found (systemd unavailable?)";
+        return;
+    }
     if (chosen == shutdown) {
-        qInfo() << "startmenu: shutdown requested (TODO)";
+        QProcess::startDetached(systemctl, {QStringLiteral("poweroff")});
     } else if (chosen == reboot) {
-        qInfo() << "startmenu: reboot requested (TODO)";
+        QProcess::startDetached(systemctl, {QStringLiteral("reboot")});
     } else if (chosen == sleep) {
-        qInfo() << "startmenu: sleep requested (TODO)";
+        QProcess::startDetached(systemctl, {QStringLiteral("suspend")});
     }
 }
 

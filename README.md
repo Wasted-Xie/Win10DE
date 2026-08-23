@@ -190,6 +190,8 @@ WLR_BACKEND=wayland ./build/src/compositor/w10compositor --frames 0
 - **FlowLayout 宽度健壮性**：布局宽度取父 widget 实际宽度（`setGeometry` 的 rect 在 layer-shell 显示时序中不稳定 100↔288，按 rect 排布会错误换行——真实运行验证）
 - **开始菜单与任务栏对齐**：`margin.bottom` 从 kTaskbarHeight 改为 **0**——overlay 层 bounds 是可用区（已排除任务栏独占区），双重避让导致 49px 空隙（实测 49px→1px）
 - 结果：桌面壁纸渐变 + 任务栏（#2D2D2D）渲染成功，238 色采样，`pixel verification passed (content rendered)`
+- **电源/账户接线**（2026-08）：电源菜单（关机/重启/睡眠）执行 **systemctl**（poweroff/reboot/suspend，systemd 环境）；账户按钮 → D-Bus `org.w10de.Shell.Lock()` → w10lock 锁屏（**首次端到端验证**：busctl 调用 → w10lock 启动 → compositor `session locked`）
+- **LockService D-Bus 接口修复**：需显式 `Q_CLASSINFO("D-Bus Interface", "org.w10de.Shell")`（默认接口名是类名，外部 dbus-send/busctl 调用不到——实测发现）；w10lock 定位增强（PATH 优先 + /usr/local/bin 兜底）
 
 ### 已知待验证项（编译时确认）
 
