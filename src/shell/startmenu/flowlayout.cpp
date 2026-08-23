@@ -69,9 +69,14 @@ void FlowLayout::setGeometry(const QRect& rect) {
 
 int FlowLayout::doLayout(const QRect& rect, bool testOnly) const {
     const QMargins m = contentsMargins();
+    // 布局宽度以父 widget 实际宽度为准：layer-shell/QScrollArea 场景下
+    // 传入的 rect 宽度在显示时序中不稳定（实测 100→288 反复），按 rect
+    // 排布会导致磁贴错误换行（每行 1 个）。
+    const int availWidth =
+        parentWidget() != nullptr ? parentWidget()->width() : rect.width();
     int left = rect.left() + m.left();
     int top = rect.top() + m.top();
-    int right = rect.right() - m.right();
+    int right = availWidth + rect.left() - m.right() - 1;
     int x = left;
     int y = top;
     int lineHeight = 0;

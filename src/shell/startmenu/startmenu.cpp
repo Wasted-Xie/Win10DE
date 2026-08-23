@@ -140,30 +140,24 @@ StartMenu::StartMenu(QWidget* parent) : QWidget(parent) {
     auto* tileHost = new QWidget(this);
     tileHost->setFixedWidth(kTilesWidth);
     auto* tl = new QVBoxLayout(tileHost);
-    tl->setContentsMargins(8, 12, 12, 12);
+    // 左右边距 0：288px 正好容纳 3 个中尺寸磁贴（3×96，Win10 无缝磁贴）。
+    tl->setContentsMargins(0, 12, 0, 12);
     tl->setSpacing(8);
 
-    auto* tileTitle = new QLabel(QStringLiteral("磁贴"), tileHost);
-    tileTitle->setStyleSheet(QStringLiteral(
+    auto* scrollTitle = new QLabel(QStringLiteral("磁贴"), tileHost);
+    scrollTitle->setStyleSheet(QStringLiteral(
         "QLabel { color: %1; font-size: 13px; font-weight: bold; }")
         .arg(theme::kTextSecondary.name()));
-    tl->addWidget(tileTitle);
+    tl->addWidget(scrollTitle);
 
-    auto* scroll = new QScrollArea(tileHost);
-    scroll->setWidgetResizable(true);
-    scroll->setFrameShape(QFrame::NoFrame);
-    scroll->setStyleSheet(QStringLiteral(
-        "QScrollArea { background: transparent; border: none; }"
-        "QScrollBar:vertical { background: transparent; width: 6px; }"
-        "QScrollBar::handle:vertical { background: %1; border-radius: 3px; }"
-        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }")
-        .arg(theme::kHoverBackground.name()));
-    tilesHost_ = new QWidget(scroll);
+    // 磁贴流直接挂在 288px 固定宽宿主上（不用 QScrollArea：其 viewport 初始
+    // 100px 宽会在显示时序中反复覆盖布局，导致磁贴垂直堆叠——真实运行验证）。
+    tilesHost_ = new QWidget(tileHost);
     tilesHost_->setStyleSheet(QStringLiteral("QWidget { background: transparent; }"));
-    auto* flow = new FlowLayout(tilesHost_, 8, 8);
+    // 水平间距 0：中磁贴 3×96=288 正好排满一行（Win10 无缝磁贴网格）。
+    auto* flow = new FlowLayout(tilesHost_, 0, 8);
     flow->setContentsMargins(0, 0, 0, 0);
-    scroll->setWidget(tilesHost_);
-    tl->addWidget(scroll, 1);
+    tl->addWidget(tilesHost_, 1);
     root->addWidget(tileHost);
 
     rebuildAppList();

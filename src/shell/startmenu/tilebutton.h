@@ -22,6 +22,9 @@ public:
     void setTileSize(TileSize size);
     TileSize tileSize() const { return size_; }
     QSize tileSizeHint() const;  // 依当前尺寸
+    // 布局使用固定磁贴尺寸（QToolButton 默认 sizeHint 按内容计算，
+    // 会撑破流式布局的网格）。
+    QSize sizeHint() const override { return tileSizeHint(); }
     QString exec() const { return exec_; }
 
 signals:
