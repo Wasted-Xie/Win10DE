@@ -14,15 +14,10 @@ endif()
 
 # ---------------------------------------------------------------------------
 # 依赖（参考 docs/ARCHITECTURE.md 第 10 节）
-# wlroots 仅提供 pkg-config 集成（wlroots.pc）；DRM_FORMAT_* 来自 libdrm。
+# wlroots 0.19 获取策略（跨发行版）：系统包优先，头需 C++ 补丁时注入补丁
+# 副本，缺失/版本不符时自动编译 vendored 源码（见 cmake/WlrootsCompat.cmake）。
 # ---------------------------------------------------------------------------
-find_package(PkgConfig REQUIRED)
-# wlroots 使用版本化 pkg-config 名（如 wlroots-0.19）；部分发行版打包为 wlroots。
-# 注意：REQUIRED 会导致失败即终止，因此首次查询不能带 REQUIRED。
-pkg_check_modules(WLROOTS IMPORTED_TARGET wlroots-0.19)
-if(NOT WLROOTS_FOUND)
-    pkg_check_modules(WLROOTS REQUIRED IMPORTED_TARGET wlroots)
-endif()
+include(cmake/WlrootsCompat.cmake)
 # libdrm 的 pkg-config 名在发行版间不同：Debian 系为 drm，Arch 为 libdrm。
 pkg_check_modules(DRM IMPORTED_TARGET drm)
 if(NOT DRM_FOUND)

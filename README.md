@@ -85,11 +85,54 @@ docs/              设计文档
 ## 构建（环境就绪后）
 
 依赖清单见架构文档第 10 节（Debian/Ubuntu 与 Arch 包名），当前代码需要：
-`wlroots 0.19`（含 wlr-protocols）、`libdrm`、`wayland`、`xkbcommon`。
+`wlroots 0.19`（含 wlr-protocols）、`libdrm`、`wayland`、`xkbcommon`、
+Qt 6（shell 用，含 WaylandClient）+ layer-shell-qt。
 
 ```bash
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
+```
+
+### 跨发行版兼容（wlroots 获取策略）
+
+构建系统自动适配发行版差异（`cmake/WlrootsCompat.cmake`）：
+
+| 场景 | 处理 |
+|---|---|
+| 系统 wlroots 0.19.x 且头 C++ 兼容 | 直接使用系统包 |
+| 系统 wlroots 0.19.x 但头为上游原版（C99 `[static N]`、`class`/`namespace` 关键字） | **构建目录自动生成补丁头副本**并以 `-I` 优先注入（不改系统文件） |
+| 系统 wlroots 缺失或版本 ≠ 0.19（Debian trixie 0.18 / Ubuntu 0.17 / Arch 0.20） | **自动用 meson 编译 vendored 源码**（`third_party/wlroots`，头已打补丁）到构建目录 |
+| libdrm pkg-config 名 | `drm`（Debian 系）↔ `libdrm`（Arch）自动回退 |
+| LayerShellQt target | `LayerShellQt::Interface` ↔ `LayerShellQt::LayerShellQt` 自动兼容 |
+
+策略选项：`-DW10DE_WLROOTS_STRATEGY=auto`（默认）/ `system` / `vendored`。
+vendored 编译需要 `meson` + `ninja` + wlroots 构建依赖。
+
+### 各发行版依赖安装
+
+```bash
+# Arch Linux
+sudo pacman -S wlroots0.19 libdrm libxkbcommon wayland qt6-base qt6-wayland \
+    layer-shell-qt cmake ninja meson base-devel
+# 注：Arch 的 wlroots0.19 头为上游原版，构建系统会自动打 C++ 补丁；
+# 若仓库已升至 0.20，自动走 vendored 编译。
+
+# Fedora 43+
+sudo dnf install wlroots-devel layer-shell-qt-devel qt6-qtbase-devel \
+    qt6-qtwayland-devel libdrm-devel libxkbcommon-devel wayland-devel \
+    meson ninja-build cmake gcc-c++
+
+# Debian 13 trixie / sid（wlroots 0.18，需 vendored 编译）
+sudo apt install meson ninja-build cmake g++ pkg-config \
+    libwlroots-dev libdrm-dev libxkbcommon-dev libwayland-dev \
+    qt6-base-dev layer-shell-qt \
+    libinput-dev libdisplay-info-dev libseat-dev libliftoff-dev \
+    hwdata libudev-dev libegl-dev libgles2-dev libgbm-dev
+
+# openSUSE Tumbleweed（包名以发行版仓库为准，vendor 策略可兜底）
+sudo zypper install wlroots-devel layer-shell-qt-devel qt6-base-devel \
+    qt6-wayland-devel libdrm-devel libxkbcommon-devel wayland-devel \
+    meson ninja cmake gcc-c++
 ```
 
 ### M0/M1 冒烟验证
@@ -133,6 +176,8 @@ WLR_BACKEND=wayland ./build/src/compositor/w10compositor --frames 0
 - **Qt API**：`QString::replace` 不支持 lambda 回调（sanitizeExec 改 globalMatch 手动拼接）；sniwatcher 补 `QDBusMessage` include 与 slot 声明
 
 **冒烟结果**：`w10compositor --frames 5 --screenshot` → 1920x1080 PNG + `pixel verification passed (center = #0078D7)`，退出码 0。
+
+**wlroots C++ 补丁策略**（跨发行版，`cmake/` 自动处理）：上游 wlroots 头含 C99 `[static N]` 与 C++ 保留字（`class`/`namespace`），原版头在 C++ 下编译失败（g++16 实测）。构建系统**编译原版源码**（C 编译头+实现自洽），安装/系统头由 `WlrootsPatchHeaders.cmake` 在**构建目录生成补丁副本**并以 `-I` 优先注入——不改系统文件、不影响其他项目。详见"跨发行版兼容"节。
 
 **完整渲染验证**（compositor + w10shell 同跑，固定 socket）—— 又发现并修复：
 - **xdg-decoration 时序**：`set_mode(SERVER_SIDE)` 在 surface 未初始化时触发 `wlr_xdg_surface_schedule_configure` 断言崩溃（gdb 定位；Qt 在首 commit 前请求 decoration）→ 未初始化则挂 commit 监听延迟设置（单槽串行，MVP 够用）

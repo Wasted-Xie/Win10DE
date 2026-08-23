@@ -141,7 +141,7 @@ struct wlr_xwayland_surface {
 	float opacity;
 
 	char *title;
-	char *class_;  // C++ 兼容：'class' 是 C++ 保留字（vendored 补丁）
+	char *class;
 	char *instance;
 	char *role;
 	char *startup_id;

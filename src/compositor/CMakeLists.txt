@@ -18,6 +18,10 @@ target_include_directories(w10compositor PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/third_party/stb   # stb_image_write.h（PNG 输出）
 )
+# 补丁头优先于系统 wlroots 头（BEFORE 修饰符须位于 PRIVATE 之前）。
+if(WLR_EXTRA_INCLUDE_DIRS)
+    target_include_directories(w10compositor BEFORE PRIVATE ${WLR_EXTRA_INCLUDE_DIRS})
+endif()
 
 # wlroots 不稳定接口需要该宏。
 target_compile_definitions(w10compositor PRIVATE WLR_USE_UNSTABLE)
@@ -28,7 +32,7 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(WAYLAND_SERVER REQUIRED IMPORTED_TARGET wayland-server)
 
 target_link_libraries(w10compositor PRIVATE
-    PkgConfig::WLROOTS
+    ${WLROOTS_TARGET}
     PkgConfig::DRM
     PkgConfig::XKBCOMMON
     PkgConfig::WAYLAND_SERVER

@@ -36,7 +36,7 @@
 | M7 | 会话集成（launcher/autostart/配置）、XWayland、多工作区 | ⬜ 未开始 |
 | M8 | 视觉打磨（圆角/阴影/动画/Aero Snap） | ⬜ 未开始 |
 
-**验证状态**：三轮子代理静态审查全部完成（共 92 问题：10 CRITICAL + 15 HIGH + 32 MEDIUM + 35 LOW，全部修复或标注，5 项可接受风险）。**2026-08 完成首次真实编译 + headless 冒烟 + 完整渲染验证**（WSL2 Arch：vendored wlroots 0.19 源码编译 + 三个二进制构建成功；`--frames 5` 截图像素校验通过；compositor+w10shell 同跑验证**桌面壁纸渐变 + 任务栏（#2D2D2D）渲染成功**，退出码 0）。编译期与渲染期修复详见 README「首次真实编译/完整渲染验证」节；**vendored 头补丁**（wlr_scene.h `[static 4]`×2、xwayland.h `class`、wlr_layer_shell_v1.h `namespace` + 生成协议头 `namespace`）必须在新装/重装 wlroots 时再次应用。
+**验证状态**：三轮子代理静态审查全部完成（共 92 问题：10 CRITICAL + 15 HIGH + 32 MEDIUM + 35 LOW，全部修复或标注，5 项可接受风险）。**2026-08 完成首次真实编译 + headless 冒烟 + 完整渲染验证**（WSL2 Arch：vendored wlroots 0.19 源码编译 + 三个二进制构建成功；`--frames 5` 截图像素校验通过；compositor+w10shell 同跑验证**桌面壁纸渐变 + 任务栏（#2D2D2D）渲染成功**，退出码 0）。编译期与渲染期修复详见 README「首次真实编译/完整渲染验证」节；**wlroots 头 C++ 补丁由构建系统自动注入**（`cmake/WlrootsPatchHeaders.cmake`，编译原版源码 + 安装/系统头补丁副本，不再手工改 vendored 头）。
 
 ---
 
@@ -129,6 +129,7 @@ w10shell（Qt 6 Widgets，layer-shell 客户端）
 | **`arrangeLayers` 仅按 `!initialized` 过滤**（不按 mapped） | 未 map 表面需要首次 configure 才能 map；按 mapped 过滤会死锁（Qt 层表面永远等不到 configure，渲染验证实测） |
 | **layer-shell-qt 时序：`winId() → get/配置 → show()`** | Qt 6.11 QPA 不允许 show 后切换 shell integration（"already has a shell integration"）；`useLayerShell()` 在 Qt 6.5+ 为废弃 no-op |
 | **截图校验：内容多样性检测**（多色即通过，纯色校验背景） | M0 的中心==纯背景假设在有 shell 内容时误判（壁纸渐变覆盖中心，实测 center=#0073CD） |
+| **wlroots 获取策略（跨发行版）**：`cmake/WlrootsCompat.cmake`——系统 0.19 头 C++ 兼容直接使用；头为上游原版则构建目录生成补丁副本以 -I 优先注入；缺失/版本不符自动 meson 编译 vendored；`-DW10DE_WLROOTS_STRATEGY=auto/system/vendored` | 上游 wlroots 头有 C99 `[static N]` 与 C++ 保留字（class/namespace），原版头在 C++ 下编译失败（g++16 实测）；策略闭环覆盖 Arch（0.19 包原版头/0.20）/Debian trixie（0.18）/Ubuntu（0.17）/Fedora 43（0.19.3） |
 | **开始菜单 `margin.bottom=0`**（overlay 层） | overlay 层 bounds 是可用区（已排除任务栏独占区），再设底边距会双重避让——实测菜单与任务栏间 49px 空隙，改为 0 后 1px |
 | **开始按钮 = 发行版 logo**（`/usr/share/pixmaps/archlinux-logo.svg`，缺失回退文字） | 系统发行版图标替代"开始"文字（Arch 蓝 #1793D1 实测渲染）；按钮 48×48 正方形（1:1 与任务栏同高）贴左（x=0 实测），图标保持原本 26×26 固定、按钮内居中 |
 | **开始菜单 Win10 布局**：三列——左侧 48px 窄栏（#171717：☰ 汉堡展开/折叠 200px、底部功能区账户→设置/文档/图片→电源最底，电源弹关机/重启/睡眠菜单与侧栏等宽 MVP 占位）、应用列表列 240px（5×按钮宽）、磁贴区 288px（6×按钮宽），总宽 576 | 与 Win10 UI 对齐（渲染验证 x=48/576 分区边界精确、三列 74/129/197 色）；账户/设置动作与真实关机为后续里程碑（PAM/systemctl） |
@@ -154,9 +155,11 @@ w10shell（Qt 6 Widgets，layer-shell 客户端）
 ## 6. 文件清单与职责（全部）
 
 ```
-CMakeLists.txt                      # 顶层：pkg 依赖（wlroots-0.19 回退 wlroots）、
-                                    #   W10DE_BUILD_SHELL option、Qt6 Widgets+WaylandClient、
-                                    #   LayerShellQt
+CMakeLists.txt                      # 顶层：WlrootsCompat 集成、W10DE_BUILD_SHELL
+                                    #   option、Qt6 Widgets+WaylandClient、LayerShellQt
+cmake/WlrootsCompat.cmake           # wlroots 获取策略（系统/补丁注入/vendored 编译）
+cmake/WlrootsPatchHeaders.cmake     # 系统 wlroots 头 C++ 补丁副本生成
+cmake/WlrootsBuildVendored.cmake    # vendored wlroots 自动编译（meson+ninja）
 README.md                           # 状态、构建、冒烟验证、待验证项、依赖与许可证
 DEPENDENCIES-LICENSES.md             # 上游依赖许可证清单（合规核实，10 项基础清单）
 docs/ARCHITECTURE.md                # 架构设计文档（决策表/里程碑/风险）
