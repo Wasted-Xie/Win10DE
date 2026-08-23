@@ -1,4 +1,5 @@
 #include "compositor/seat.h"
+#include "compositor/util.h"
 
 #include <linux/input-event-codes.h>  // BTN_LEFT 等
 
@@ -354,7 +355,7 @@ wlr_surface* Seat::surfaceAt(double lx, double ly, double* sx, double* sy,
 // ---- 指针事件 ----
 
 void Seat::handleCursorMotion(wl_listener* listener, void* data) {
-    auto* seat = wl_container_of(listener, seat, cursorMotion_);
+    auto* seat = W10DE_CONTAINER_OF(listener, Seat, cursorMotion_);
     auto* event = static_cast<wlr_pointer_motion_event*>(data);
     // 0.19 签名：wlr_cursor_move(cursor, wlr_input_device*, dx, dy)。
     wlr_cursor_move(seat->cursor_, &event->pointer->base, event->delta_x, event->delta_y);
@@ -362,20 +363,20 @@ void Seat::handleCursorMotion(wl_listener* listener, void* data) {
 }
 
 void Seat::handleCursorMotionAbsolute(wl_listener* listener, void* data) {
-    auto* seat = wl_container_of(listener, seat, cursorMotionAbs_);
+    auto* seat = W10DE_CONTAINER_OF(listener, Seat, cursorMotionAbs_);
     auto* event = static_cast<wlr_pointer_motion_absolute_event*>(data);
     wlr_cursor_warp_absolute(seat->cursor_, &event->pointer->base, event->x, event->y);
     seat->processCursorMotion(event->time_msec);
 }
 
 void Seat::handleCursorButton(wl_listener* listener, void* data) {
-    auto* seat = wl_container_of(listener, seat, cursorButton_);
+    auto* seat = W10DE_CONTAINER_OF(listener, Seat, cursorButton_);
     auto* event = static_cast<wlr_pointer_button_event*>(data);
     seat->processCursorButton(event->time_msec, event->button, event->state);
 }
 
 void Seat::handleCursorAxis(wl_listener* listener, void* data) {
-    auto* seat = wl_container_of(listener, seat, cursorAxis_);
+    auto* seat = W10DE_CONTAINER_OF(listener, Seat, cursorAxis_);
     auto* event = static_cast<wlr_pointer_axis_event*>(data);
     // 转发滚轮事件；M1 不做缩放等处理。
     wlr_seat_pointer_notify_axis(seat->seat_, event->time_msec,
@@ -384,12 +385,12 @@ void Seat::handleCursorAxis(wl_listener* listener, void* data) {
 }
 
 void Seat::handleCursorFrame(wl_listener* listener, void* /*data*/) {
-    auto* seat = wl_container_of(listener, seat, cursorFrame_);
+    auto* seat = W10DE_CONTAINER_OF(listener, Seat, cursorFrame_);
     wlr_seat_pointer_notify_frame(seat->seat_);
 }
 
 void Seat::handleRequestSetCursor(wl_listener* listener, void* data) {
-    auto* self = wl_container_of(listener, self, requestSetCursor_);
+    auto* self = W10DE_CONTAINER_OF(listener, Seat, requestSetCursor_);
     auto* event = static_cast<wlr_seat_pointer_request_set_cursor_event*>(data);
     // M1 简化：不做 serial 校验，直接采纳客户端光标。
     if (event->surface != nullptr && self->seat_->pointer_state.focused_surface != nullptr) {
@@ -581,20 +582,20 @@ void Seat::processCursorButton(uint32_t timeMsec, uint32_t button,
 // ---- 键盘事件 ----
 
 void Seat::handleKeyboardKey(wl_listener* listener, void* data) {
-    auto* seat = wl_container_of(listener, seat, keyboardKey_);
+    auto* seat = W10DE_CONTAINER_OF(listener, Seat, keyboardKey_);
     auto* event = static_cast<wlr_keyboard_key_event*>(data);
     seat->processKey(event->time_msec, event->keycode, event->state);
 }
 
 void Seat::handleKeyboardModifiers(wl_listener* listener, void* /*data*/) {
-    auto* seat = wl_container_of(listener, seat, keyboardModifiers_);
+    auto* seat = W10DE_CONTAINER_OF(listener, Seat, keyboardModifiers_);
     if (seat->keyboard_ != nullptr) {
         wlr_seat_keyboard_notify_modifiers(seat->seat_, &seat->keyboard_->modifiers);
     }
 }
 
 void Seat::handleKeyboardDestroy(wl_listener* listener, void* /*data*/) {
-    auto* seat = wl_container_of(listener, seat, keyboardDestroy_);
+    auto* seat = W10DE_CONTAINER_OF(listener, Seat, keyboardDestroy_);
     // 键盘对象即将释放：摘除挂在其事件上的监听（含本监听自身），
     // 避免对象释放后 Seat 析构 remove 时访问已释放链表（UAF）。
     wl_list_remove(&seat->keyboardKey_.link);
@@ -658,13 +659,13 @@ void Seat::processKey(uint32_t timeMsec, uint32_t keycode, wl_keyboard_key_state
 // ---- 剪贴板 ----
 
 void Seat::handleRequestSetSelection(wl_listener* listener, void* data) {
-    auto* seat = wl_container_of(listener, seat, requestSetSelection_);
+    auto* seat = W10DE_CONTAINER_OF(listener, Seat, requestSetSelection_);
     auto* event = static_cast<wlr_seat_request_set_selection_event*>(data);
     wlr_seat_set_selection(seat->seat_, event->source, event->serial);
 }
 
 void Seat::handleRequestSetPrimarySelection(wl_listener* listener, void* data) {
-    auto* seat = wl_container_of(listener, seat, requestSetPrimarySelection_);
+    auto* seat = W10DE_CONTAINER_OF(listener, Seat, requestSetPrimarySelection_);
     auto* event = static_cast<wlr_seat_request_set_primary_selection_event*>(data);
     wlr_seat_set_primary_selection(seat->seat_, event->source, event->serial);
 }

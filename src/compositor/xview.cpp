@@ -1,4 +1,5 @@
 #include "compositor/xview.h"
+#include "compositor/util.h"
 
 #include "compositor/seat.h"
 #include "compositor/server.h"
@@ -95,7 +96,7 @@ void XView::moveTo(int x, int y) {
 // ---- 事件回调 ----
 
 void XView::handleAssociate(wl_listener* listener, void* /*data*/) {
-    auto* self = wl_container_of(listener, self, associate_);
+    auto* self = W10DE_CONTAINER_OF(listener, XView, associate_);
     if (self->xsurface_->surface == nullptr) {
         wlr_log(WLR_ERROR, "xwayland surface associated without surface");
         return;
@@ -115,7 +116,7 @@ void XView::handleAssociate(wl_listener* listener, void* /*data*/) {
 }
 
 void XView::handleDissociate(wl_listener* listener, void* /*data*/) {
-    auto* self = wl_container_of(listener, self, dissociate_);
+    auto* self = W10DE_CONTAINER_OF(listener, XView, dissociate_);
     // X11 窗口隐藏（unmap）时 wlroots 使 surface 无效并发 dissociate：
     // 必须销毁 scene 节点、摘除 map/unmap 监听（否则同 surface 重新
     // associate 时二次 add 形成链表自环崩溃）。
@@ -132,7 +133,7 @@ void XView::handleDissociate(wl_listener* listener, void* /*data*/) {
 }
 
 void XView::handleMap(wl_listener* listener, void* /*data*/) {
-    auto* self = wl_container_of(listener, self, map_);
+    auto* self = W10DE_CONTAINER_OF(listener, XView, map_);
     self->mapped_ = true;
     self->compositor_.addXView(self);
     // 初始位置：X11 客户端提供（xsurface->x/y 由 XWM 设置）。
@@ -148,29 +149,29 @@ void XView::handleMap(wl_listener* listener, void* /*data*/) {
 }
 
 void XView::handleUnmap(wl_listener* listener, void* /*data*/) {
-    auto* self = wl_container_of(listener, self, unmap_);
+    auto* self = W10DE_CONTAINER_OF(listener, XView, unmap_);
     self->mapped_ = false;
     self->compositor_.removeXView(self);
     self->compositor_.seat()->unfocusSurface(self->surface());
 }
 
 void XView::handleDestroy(wl_listener* listener, void* /*data*/) {
-    auto* self = wl_container_of(listener, self, destroy_);
+    auto* self = W10DE_CONTAINER_OF(listener, XView, destroy_);
     delete self;  // wlroots destroy 信号是最后一个事件。
 }
 
 void XView::handleRequestActivate(wl_listener* listener, void* /*data*/) {
-    auto* self = wl_container_of(listener, self, requestActivate_);
+    auto* self = W10DE_CONTAINER_OF(listener, XView, requestActivate_);
     self->activate(true);
 }
 
 void XView::handleRequestClose(wl_listener* listener, void* /*data*/) {
-    auto* self = wl_container_of(listener, self, requestClose_);
+    auto* self = W10DE_CONTAINER_OF(listener, XView, requestClose_);
     self->close();
 }
 
 void XView::handleRequestConfigure(wl_listener* listener, void* data) {
-    auto* self = wl_container_of(listener, self, requestConfigure_);
+    auto* self = W10DE_CONTAINER_OF(listener, XView, requestConfigure_);
     auto* event = static_cast<wlr_xwayland_surface_configure_event*>(data);
     // 采用客户端请求的几何（X11 客户端自主定位）。
     self->x_ = event->x;
@@ -183,18 +184,18 @@ void XView::handleRequestConfigure(wl_listener* listener, void* data) {
 }
 
 void XView::handleRequestMaximize(wl_listener* listener, void* /*data*/) {
-    auto* self = wl_container_of(listener, self, requestMaximize_);
+    auto* self = W10DE_CONTAINER_OF(listener, XView, requestMaximize_);
     self->setMaximized(true);
 }
 
 void XView::handleRequestMinimize(wl_listener* listener, void* data) {
-    auto* self = wl_container_of(listener, self, requestMinimize_);
+    auto* self = W10DE_CONTAINER_OF(listener, XView, requestMinimize_);
     auto* event = static_cast<wlr_xwayland_minimize_event*>(data);
     self->setMinimized(event->minimize);
 }
 
 void XView::handleSetTitle(wl_listener* listener, void* /*data*/) {
-    auto* self = wl_container_of(listener, self, setTitle_);
+    auto* self = W10DE_CONTAINER_OF(listener, XView, setTitle_);
     wlr_log(WLR_DEBUG, "xwayland title set: '%s'",
             self->title() != nullptr ? self->title() : "");
 }

@@ -41,8 +41,7 @@ public:
     int width() const { return width_; }
     int height() const { return height_; }
 
-private:
-    // ---- wl_registry / 协议事件 ----
+    // ---- 协议事件回调（listener 结构体在类外匿名命名空间初始化，须 public）----
     static void registryGlobal(void* data, wl_registry* registry, uint32_t name,
                                const char* interface, uint32_t version);
     static void registryGlobalRemove(void* data, wl_registry* registry, uint32_t name);
@@ -66,6 +65,7 @@ private:
     static void seatCapabilities(void* data, wl_seat* seat, uint32_t capabilities);
     static void seatName(void* data, wl_seat* seat, const char* name);
 
+private:
     // 创建/销毁 shm buffer（双 buffer 交替提交）。
     bool createBuffer(int width, int height);
     void destroyBuffer();

@@ -22,8 +22,14 @@ target_include_directories(w10compositor PRIVATE
 # wlroots 不稳定接口需要该宏。
 target_compile_definitions(w10compositor PRIVATE WLR_USE_UNSTABLE)
 
+# wayland-server：wlroots.pc 的依赖在 Requires.private（仅静态链接传递），
+# 而 compositor 直接调用 wl_display_create 等 API，须显式链接。
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(WAYLAND_SERVER REQUIRED IMPORTED_TARGET wayland-server)
+
 target_link_libraries(w10compositor PRIVATE
     PkgConfig::WLROOTS
     PkgConfig::DRM
     PkgConfig::XKBCOMMON
+    PkgConfig::WAYLAND_SERVER
 )

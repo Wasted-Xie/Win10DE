@@ -7,6 +7,8 @@
 // wlroots 头文件没有 extern "C" 保护，C++ 中必须手动包裹。
 extern "C" {
 #include <wayland-server-core.h>
+extern "C" {
+// wlroots headers lack extern "C" guards; required in C++.
 #include <wlr/backend.h>
 #include <wlr/render/allocator.h>
 #include <wlr/render/wlr_renderer.h>
@@ -20,6 +22,7 @@ extern "C" {
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/util/log.h>
 #include <wlr/xwayland.h>
+}  // extern "C" (wlroots)
 }
 
 #include <memory>

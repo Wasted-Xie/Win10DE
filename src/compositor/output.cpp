@@ -1,4 +1,5 @@
 #include "compositor/output.h"
+#include "compositor/util.h"
 
 #include <cstring>
 #include <vector>
@@ -132,7 +133,7 @@ Output::~Output() {
 }
 
 void Output::handleFrameThunk(wl_listener* listener, void* /*data*/) {
-    auto* output = wl_container_of(listener, output, frameListener_);
+    auto* output = W10DE_CONTAINER_OF(listener, Output, frameListener_);
     output->handleFrame();
 }
 
@@ -154,7 +155,12 @@ void Output::handleFrame() {
         }
         compositor_.setExitCode(exitCode);
         wl_display_terminate(compositor_.display());
+        return;
     }
+    // 请求下一帧：headless 后端无垂直同步（frame timer 仅在 enable commit
+    // 时续期），须显式 schedule_frame（内部用 idle timer 补帧）——否则
+    // 渲染停在第二帧（真实编译验证）。
+    wlr_output_schedule_frame(output_);
 }
 
 bool Output::takeScreenshot(const std::string& path) {

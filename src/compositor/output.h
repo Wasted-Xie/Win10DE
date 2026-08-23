@@ -6,9 +6,12 @@
 
 extern "C" {
 #include <wayland-server-core.h>
+extern "C" {
+// wlroots headers lack extern "C" guards; required in C++.
 #include <wlr/types/wlr_output.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/util/log.h>
+}  // extern "C" (wlroots)
 }
 
 #include <string>

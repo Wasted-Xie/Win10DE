@@ -1,4 +1,5 @@
 #include "compositor/view.h"
+#include "compositor/util.h"
 
 #include "compositor/seat.h"
 #include "compositor/server.h"
@@ -355,19 +356,19 @@ void View::destroyForeignToplevel() {
 }
 
 void View::handleFtlMaximize(wl_listener* listener, void* data) {
-    auto* view = wl_container_of(listener, view, ftMaximize_);
+    auto* view = W10DE_CONTAINER_OF(listener, View, ftMaximize_);
     auto* event = static_cast<wlr_foreign_toplevel_handle_v1_maximized_event*>(data);
     view->setMaximized(event->maximized);
 }
 
 void View::handleFtlMinimize(wl_listener* listener, void* data) {
-    auto* view = wl_container_of(listener, view, ftMinimize_);
+    auto* view = W10DE_CONTAINER_OF(listener, View, ftMinimize_);
     auto* event = static_cast<wlr_foreign_toplevel_handle_v1_minimized_event*>(data);
     view->setMinimized(event->minimized);
 }
 
 void View::handleFtlActivate(wl_listener* listener, void* /*data*/) {
-    auto* view = wl_container_of(listener, view, ftActivate_);
+    auto* view = W10DE_CONTAINER_OF(listener, View, ftActivate_);
     // 任务栏点击窗口：恢复显示（若最小化）、聚焦并置顶（仅已映射窗口）。
     if (!view->mapped_) {
         return;
@@ -380,19 +381,19 @@ void View::handleFtlActivate(wl_listener* listener, void* /*data*/) {
 }
 
 void View::handleFtlFullscreen(wl_listener* listener, void* data) {
-    auto* view = wl_container_of(listener, view, ftFullscreen_);
+    auto* view = W10DE_CONTAINER_OF(listener, View, ftFullscreen_);
     auto* event = static_cast<wlr_foreign_toplevel_handle_v1_fullscreen_event*>(data);
     // M2a：fullscreen 暂按最大化处理。
     view->setMaximized(event->fullscreen);
 }
 
 void View::handleFtlClose(wl_listener* listener, void* /*data*/) {
-    auto* view = wl_container_of(listener, view, ftClose_);
+    auto* view = W10DE_CONTAINER_OF(listener, View, ftClose_);
     view->close();
 }
 
 void View::handleFtlDestroy(wl_listener* listener, void* /*data*/) {
-    auto* view = wl_container_of(listener, view, ftDestroy_);
+    auto* view = W10DE_CONTAINER_OF(listener, View, ftDestroy_);
     // handle 即将释放：摘除全部 ft 监听并重新初始化（析构可能再次 remove）。
     wl_list_remove(&view->ftMaximize_.link);
     wl_list_init(&view->ftMaximize_.link);
@@ -412,7 +413,7 @@ void View::handleFtlDestroy(wl_listener* listener, void* /*data*/) {
 // ---- 事件回调 ----
 
 void View::handleMap(wl_listener* listener, void* /*data*/) {
-    auto* view = wl_container_of(listener, view, map_);
+    auto* view = W10DE_CONTAINER_OF(listener, View, map_);
     view->mapped_ = true;
     // remap（unmap 后再次 map）场景：复位最小化状态并恢复显示。
     if (view->minimized_) {
@@ -462,7 +463,7 @@ void View::handleMap(wl_listener* listener, void* /*data*/) {
 }
 
 void View::handleUnmap(wl_listener* listener, void* /*data*/) {
-    auto* view = wl_container_of(listener, view, unmap_);
+    auto* view = W10DE_CONTAINER_OF(listener, View, unmap_);
     view->mapped_ = false;
     if (view->decorationTree_ != nullptr) {
         wlr_scene_node_set_enabled(&view->decorationTree_->node, false);
@@ -472,19 +473,19 @@ void View::handleUnmap(wl_listener* listener, void* /*data*/) {
 }
 
 void View::handleCommit(wl_listener* listener, void* /*data*/) {
-    auto* view = wl_container_of(listener, view, commit_);
+    auto* view = W10DE_CONTAINER_OF(listener, View, commit_);
     if (view->mapped_) {
         view->updateDecoration();
     }
 }
 
 void View::handleDestroy(wl_listener* listener, void* /*data*/) {
-    auto* view = wl_container_of(listener, view, destroy_);
+    auto* view = W10DE_CONTAINER_OF(listener, View, destroy_);
     delete view;  // wlroots destroy 信号是最后一个事件，此后对象不再被引用。
 }
 
 void View::handleRequestMove(wl_listener* listener, void* data) {
-    auto* view = wl_container_of(listener, view, requestMove_);
+    auto* view = W10DE_CONTAINER_OF(listener, View, requestMove_);
     auto* event = static_cast<wlr_xdg_toplevel_move_event*>(data);
     // 校验 serial 来自 seat 最近的输入事件，防伪造。
     if (view->mapped_ && event->seat != nullptr &&
@@ -494,7 +495,7 @@ void View::handleRequestMove(wl_listener* listener, void* data) {
 }
 
 void View::handleRequestResize(wl_listener* listener, void* data) {
-    auto* view = wl_container_of(listener, view, requestResize_);
+    auto* view = W10DE_CONTAINER_OF(listener, View, requestResize_);
     auto* event = static_cast<wlr_xdg_toplevel_resize_event*>(data);
     if (view->mapped_ && event->seat != nullptr &&
             wlr_seat_client_validate_event_serial(event->seat, event->serial)) {
@@ -503,26 +504,26 @@ void View::handleRequestResize(wl_listener* listener, void* data) {
 }
 
 void View::handleRequestMaximize(wl_listener* listener, void* /*data*/) {
-    auto* view = wl_container_of(listener, view, requestMaximize_);
+    auto* view = W10DE_CONTAINER_OF(listener, View, requestMaximize_);
     // 事件不携带目标状态，以客户端请求的为准（避免无条件翻转失步）。
     view->setMaximized(view->toplevel()->requested.maximized);
 }
 
 void View::handleRequestMinimize(wl_listener* listener, void* /*data*/) {
-    auto* view = wl_container_of(listener, view, requestMinimize_);
+    auto* view = W10DE_CONTAINER_OF(listener, View, requestMinimize_);
     // 客户端 set_minimized 请求即请求最小化。
     view->setMinimized(true);
 }
 
 void View::handleRequestFullscreen(wl_listener* listener, void* /*data*/) {
     // M2a：fullscreen 暂按最大化处理，后续里程碑完善独立 fullscreen 状态。
-    auto* view = wl_container_of(listener, view, requestFullscreen_);
+    auto* view = W10DE_CONTAINER_OF(listener, View, requestFullscreen_);
     wlr_log(WLR_INFO, "fullscreen request (M2a: treating as maximize)");
     view->setMaximized(view->toplevel()->requested.fullscreen);
 }
 
 void View::handleSetTitle(wl_listener* listener, void* /*data*/) {
-    auto* view = wl_container_of(listener, view, setTitle_);
+    auto* view = W10DE_CONTAINER_OF(listener, View, setTitle_);
     wlr_log(WLR_DEBUG, "toplevel title set: '%s'", view->title() ? view->title() : "");
     if (view->ftHandle_ != nullptr) {
         wlr_foreign_toplevel_handle_v1_set_title(view->ftHandle_,
@@ -531,7 +532,7 @@ void View::handleSetTitle(wl_listener* listener, void* /*data*/) {
 }
 
 void View::handleSetAppId(wl_listener* listener, void* /*data*/) {
-    auto* view = wl_container_of(listener, view, setAppId_);
+    auto* view = W10DE_CONTAINER_OF(listener, View, setAppId_);
     wlr_log(WLR_DEBUG, "toplevel app_id set: '%s'", view->appId() ? view->appId() : "");
     if (view->ftHandle_ != nullptr) {
         wlr_foreign_toplevel_handle_v1_set_app_id(view->ftHandle_,

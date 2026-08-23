@@ -1,4 +1,5 @@
 #include "compositor/layer_shell.h"
+#include "compositor/util.h"
 
 #include "compositor/server.h"
 
@@ -39,7 +40,7 @@ LayerSurface::LayerSurface(Compositor& compositor, wlr_layer_surface_v1* surface
     wl_signal_add(&layer_->surface->events.commit, &commit_);
 
     wlr_log(WLR_INFO, "new layer surface: namespace='%s' layer=%d",
-            layer_->namespace ? layer_->namespace : "", layer_->pending.layer);
+            layer_->namespace_ ? layer_->namespace_ : "", layer_->pending.layer);
 }
 
 LayerSurface::~LayerSurface() {
@@ -73,14 +74,14 @@ wlr_surface* LayerSurface::surfaceAt(double lx, double ly, double* sx, double* s
 // ---- 事件回调 ----
 
 void LayerSurface::handleDestroy(wl_listener* listener, void* /*data*/) {
-    auto* self = wl_container_of(listener, self, destroy_);
+    auto* self = W10DE_CONTAINER_OF(listener, LayerSurface, destroy_);
     self->compositor_.removeLayerSurface(self);
     delete self;  // wlroots destroy 信号是最后一个事件。
 }
 
 void LayerSurface::handleMap(wl_listener* listener, void* /*data*/) {
-    auto* self = wl_container_of(listener, self, map_);
-    const char* ns = self->layer_->namespace != nullptr ? self->layer_->namespace : "";
+    auto* self = W10DE_CONTAINER_OF(listener, LayerSurface, map_);
+    const char* ns = self->layer_->namespace_ != nullptr ? self->layer_->namespace_ : "";
     wlr_log(WLR_INFO, "layer surface mapped: '%s' layer=%d", ns,
             static_cast<int>(self->layer_->current.layer));
     // 挂到对应层锚：background/bottom 在窗口下，top/overlay 在窗口上。
@@ -92,19 +93,19 @@ void LayerSurface::handleMap(wl_listener* listener, void* /*data*/) {
 }
 
 void LayerSurface::handleUnmap(wl_listener* listener, void* /*data*/) {
-    auto* self = wl_container_of(listener, self, unmap_);
+    auto* self = W10DE_CONTAINER_OF(listener, LayerSurface, unmap_);
     self->compositor_.arrangeLayers();
 }
 
 void LayerSurface::handleCommit(wl_listener* listener, void* /*data*/) {
-    auto* self = wl_container_of(listener, self, commit_);
+    auto* self = W10DE_CONTAINER_OF(listener, LayerSurface, commit_);
     // 客户端可通过 commit 修改 layer（如 top→overlay）：scene 节点必须
     // 重新挂锚，否则渲染 z 序与命中检测（按 current.layer）不一致
     // （wlr_scene_layer_surface_v1_configure 只设置位置/尺寸，不 reparent）。
     const int layer = static_cast<int>(self->layer_->current.layer);
     wlr_scene_tree* anchor = self->compositor_.layerAnchor(layer);
     if (self->sceneLayer_ != nullptr && anchor != nullptr &&
-            self->sceneLayer_->tree->node.parent != &anchor->node) {
+            self->sceneLayer_->tree->node.parent != anchor) {
         wlr_scene_node_reparent(&self->sceneLayer_->tree->node, anchor);
     }
     // 属性（锚点/边距/独占区/期望尺寸）变化时重排。

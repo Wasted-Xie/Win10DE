@@ -33,6 +33,11 @@ public slots:
     bool IsStatusNotifierHostRegistered() const;
     int ProtocolVersion() const;
 
+private slots:
+    // 监听 NameOwnerChanged：item 进程退出时清理残留并通知移除。
+    void onNameOwnerChanged(const QString& name, const QString& oldOwner,
+                            const QString& newOwner);
+
 private:
     // 归一化客户端传入的 service 参数：
     //   "/StatusNotifierItem" → (调用者 bus 名, /StatusNotifierItem)

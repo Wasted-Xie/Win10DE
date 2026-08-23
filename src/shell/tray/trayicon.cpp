@@ -109,7 +109,7 @@ QIcon TrayIcon::iconFromItem() const {
         }
     }
     const QDBusArgument pixmapArg = item_->property("IconPixmap").value<QDBusArgument>();
-    if (pixmapArg.currentType() != QDBusArgument::InvalidType) {
+    if (pixmapArg.currentType() != QDBusArgument::UnknownType) {
         return parseIconPixmap(pixmapArg);
     }
     return QIcon();

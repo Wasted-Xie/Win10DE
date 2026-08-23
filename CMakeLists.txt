@@ -23,7 +23,11 @@ pkg_check_modules(WLROOTS IMPORTED_TARGET wlroots-0.19)
 if(NOT WLROOTS_FOUND)
     pkg_check_modules(WLROOTS REQUIRED IMPORTED_TARGET wlroots)
 endif()
-pkg_check_modules(DRM REQUIRED IMPORTED_TARGET drm)
+# libdrm 的 pkg-config 名在发行版间不同：Debian 系为 drm，Arch 为 libdrm。
+pkg_check_modules(DRM IMPORTED_TARGET drm)
+if(NOT DRM_FOUND)
+    pkg_check_modules(DRM REQUIRED IMPORTED_TARGET libdrm)
+endif()
 pkg_check_modules(XKBCOMMON REQUIRED IMPORTED_TARGET xkbcommon)
 
 # ---- M3 shell 客户端（Qt）----

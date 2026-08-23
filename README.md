@@ -13,7 +13,7 @@ Linux 上的 Windows 10 风格桌面环境，从零实现。
 
 ## 状态
 
-**M1 + M2a + M3 前置（layer-shell）编码完成，待 Linux 构建环境验证**（当前工作区为 Windows，无法编译）。
+**M0-M7 编码完成，WSL2（Arch）真实编译 + headless 冒烟验证通过**（2026-08：vendored wlroots 0.19 源码编译 + 5 帧渲染 + 截图 + 像素校验 `pixel verification passed`，中心像素 #0078D7）。
 
 - [x] 技术调研与架构设计
 - [x] M0 项目骨架 + headless compositor 代码（未编译验证）
@@ -55,7 +55,7 @@ Linux 上的 Windows 10 风格桌面环境，从零实现。
 - [x] M7 会话集成（续）：**XWayland**（`wlr_xwayland` lazy 模式 + XView 窗口类：
       map/unmap/激活/关闭/最大化/最小化/configure、scene 集成、seat 命中、
       DISPLAY 环境注入）——未编译验证
-- [ ] 编译与冒烟验证（headless 运行 + 截图 + 像素校验）
+- [x] 编译与冒烟验证（headless 运行 + 截图 + 像素校验，2026-08 Arch/WSL2 通过）
 - [ ] M7 续：多工作区；XWayland 装饰/任务栏集成（M8）
 - [ ] M2b 标题栏文字渲染（cairo/pango）与交互打磨
 - [ ] M7 会话集成 / XWayland / 多工作区
@@ -113,11 +113,31 @@ WLR_BACKEND=wayland ./build/src/compositor/w10compositor --frames 0
 `third_party/wlroots/` 为 wlroots 0.19.0 源码（git 克隆，tag `0.19.0`），
 用作 API 对照（wlroots 头文件无 `extern "C"` 保护，C++ 引用需手动包裹）。
 
+### 首次真实编译（2026-08，Arch/WSL2）—— 发现并修复
+
+项目在 WSL2 Arch 上完成**首次真实编译 + headless 冒烟**（此前全部为静态审查，从未编译）。编译过程发现并修复：
+
+- **wlroots 头 C++ 兼容补丁（vendored，3 头 + 1 生成头）**：
+  - `wlr_scene.h`：`const float color[static 4]`（C99 语法，**g++16 不接受**，实测验证）→ `color[4]`（2 处）
+  - `xwayland.h`：`char *class`（C++ 保留字）→ `class_`
+  - `wlr_layer_shell_v1.h` + 生成的协议头：`char *namespace`（C++ 保留字）→ `namespace_`
+  - 补丁同时应用到 `/usr/local` 安装头（重新编译/安装时需再次应用，见 HANDOFF）
+- **`wl_container_of` + `auto` 自引用**（C++ 特有，57 处）：新增 `W10DE_CONTAINER_OF(ptr, Type, member)` 宏（`src/compositor/util.h`）
+- **wlr 头缺 `extern "C"` 保护**：server.h/seat.h/view.h/xview.h/layer_shell.h/output.h 的 wlr include 全部手动包裹（server.cpp 原本已包）
+- **layer-shell-qt API**：`setAnchors` 需显式 `Anchors(...)` 构造（普通枚举 `|` 得 int）；CMake target 为 `LayerShellQt::Interface`（非 `LayerShellQt::LayerShellQt`，兼容两者）
+- **Qt 6.11 头布局**：qpa 头移入版本化目录 `QtGui/6.11.2/QtGui/qpa/`（环境符号链接处理，见 HANDOFF）；`nativeInterface` 为**非静态成员**（`qGuiApp->nativeInterface<...>()`）；`QDBusArgument::InvalidType` 已改名 `UnknownType`
+- **wlroots 0.19 API 核实**：无 `wlr_scene_destroy`（用 `wlr_scene_node_destroy(&scene->tree.node)`）；无 `WLR_WARNING`（改用 `WLR_INFO`）；`wl_display_add_socket_auto` 返回**内部指针不可 free**（注释原假设 strdup 是错的，真实崩溃验证）；headless 后端无 vsync，须每帧 `wlr_output_schedule_frame`（否则渲染停在第二帧）
+- **构建配置**：libdrm 的 pkg-config 名 Arch 为 `libdrm`（Debian 系为 `drm`，CMake 已回退）；`w10compositor` 显式链接 `wayland-server`（wlroots.pc 的 Requires.private 不传递）；shell include 补 `src/shell` 路径
+- **运行时容错**：XWayland 创建失败降级为警告（WSL/headless 无 X11 环境不致命）
+- **Qt API**：`QString::replace` 不支持 lambda 回调（sanitizeExec 改 globalMatch 手动拼接）；sniwatcher 补 `QDBusMessage` include 与 slot 声明
+
+**冒烟结果**：`w10compositor --frames 5 --screenshot` → 1920x1080 PNG + `pixel verification passed (center = #0078D7)`，退出码 0。
+
 ### 已知待验证项（编译时确认）
 
-- `wlr_scene_rect_create` 的 `const float color[static 4]` 是 C99 数组参数语法，
-  C++ 标准不支持；wlroots 0.19 已被 wayfire 等 C++ 项目使用，多数编译器按扩展接受，
-  但需在真实 Linux 环境编译确认。
+- ~~`const float color[static 4]` C++ 接受度~~ ✅ 已验证：g++16 不接受，vendored 补丁解决
+- wlroots 0.19 与新版 libinput（Arch 1.31）的枚举兼容：`LIBINPUT_SWITCH_KEYPAD_SLIDE` 未处理被 `-Werror` 拦截 → 编译 wlroots 用 `-Dwerror=false`
+- 嵌套运行（`WLR_BACKEND=wayland` 开窗口）与 DRM 真机验证：待 WSLg/真机
 - 已执行三轮独立代码审查（前两轮各 4 个子代理并行 + 人工，第 3 轮最终验证
   4 组并行 + 输入层重拉）并修复，三轮共发现 **92 个问题**（10 CRITICAL +
   15 HIGH + 32 MEDIUM + 35 LOW），全部修复或标注（5 项为可接受风险未修）：

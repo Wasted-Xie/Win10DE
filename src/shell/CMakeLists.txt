@@ -47,13 +47,22 @@ add_executable(w10shell
 
 target_include_directories(w10shell PRIVATE
     ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/shell   # 支持 "startmenu/xxx.h"、"tray/xxx.h" 等内部前缀写法
     ${CMAKE_CURRENT_BINARY_DIR}   # 生成的协议头
 )
+
+# layer-shell-qt 导出的 target 名随版本不同：Arch 为 LayerShellQt::Interface，
+# 部分发行版/旧版本为 LayerShellQt::LayerShellQt —— 两者兼容。
+if(TARGET LayerShellQt::Interface)
+    set(LAYERSHELLQT_TARGET LayerShellQt::Interface)
+else()
+    set(LAYERSHELLQT_TARGET LayerShellQt::LayerShellQt)
+endif()
 
 target_link_libraries(w10shell PRIVATE
     Qt6::Widgets
     Qt6::WaylandClient
     Qt6::DBus
-    LayerShellQt::LayerShellQt
+    ${LAYERSHELLQT_TARGET}
     PkgConfig::WAYLAND_CLIENT
 )

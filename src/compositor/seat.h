@@ -3,6 +3,8 @@
 
 extern "C" {
 #include <wayland-server-core.h>
+extern "C" {
+// wlroots headers lack extern "C" guards; required in C++.
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_input_device.h>
 #include <wlr/types/wlr_keyboard.h>
@@ -10,6 +12,7 @@ extern "C" {
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_xcursor_manager.h>
 #include <wlr/util/log.h>
+}  // extern "C" (wlroots)
 }
 
 #include <xkbcommon/xkbcommon.h>

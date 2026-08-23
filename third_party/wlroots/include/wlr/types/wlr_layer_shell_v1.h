@@ -86,7 +86,7 @@ struct wlr_layer_surface_v1 {
 	struct wlr_layer_shell_v1 *shell;
 	struct wl_list popups; // wlr_xdg_popup.link
 
-	char *namespace;
+	char *namespace_;  // C++ 兼容：'namespace' 是 C++ 保留字（vendored 补丁）
 
 	bool configured;
 	struct wl_list configure_list;

@@ -23,7 +23,7 @@ int main(int argc, char* argv[]) {
 
     // 获取 Wayland display（Qt 平台集成提供；锁定期间无普通窗口）。
     auto* waylandApp =
-        QGuiApplication::nativeInterface<QNativeInterface::QWaylandApplication>();
+        app.nativeInterface<QNativeInterface::QWaylandApplication>();
     wl_display* display = waylandApp != nullptr ? waylandApp->display() : nullptr;
     if (display == nullptr) {
         std::fprintf(stderr, "w10lock: no Wayland display (not running on Wayland?)\n");

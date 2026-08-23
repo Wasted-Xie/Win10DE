@@ -15,17 +15,23 @@ namespace w10de {
 namespace {
 
 // 清理 Exec 中的字段码（%f/%F/%u/%U/%i/%c/%k 等）：M3 不传文件参数。
-// 单次正则回调替换：%%（字面 %）与字段码互不干扰（先整体还原再删除会
-// 误删 %%f 这类组合）。
+// Qt 的 QString::replace 不支持回调替换，用 QRegularExpression::globalMatch
+// 手动拼接：%%（字面 %）与字段码互不干扰（先整体还原再删除会误删 %%f
+// 这类组合）。
 QString sanitizeExec(const QString& exec) {
-    QString cmd = exec;
-    cmd.replace(QRegularExpression(QStringLiteral("%%|%[fFuUdDnNickvm]")),
-                [](const QRegularExpressionMatch& match) {
-                    return match.captured(0) == QStringLiteral("%%")
-                        ? QStringLiteral("%")
-                        : QString();
-                });
-    return cmd.trimmed();
+    const QRegularExpression re(QStringLiteral("%%|%[fFuUdDnNickvm]"));
+    QString out;
+    int last = 0;
+    QRegularExpressionMatchIterator it = re.globalMatch(exec);
+    while (it.hasNext()) {
+        const QRegularExpressionMatch match = it.next();
+        out += exec.mid(last, match.capturedStart() - last);
+        out += match.captured(0) == QStringLiteral("%%") ? QStringLiteral("%")
+                                                         : QString();
+        last = match.capturedEnd();
+    }
+    out += exec.mid(last);
+    return out.trimmed();
 }
 
 }  // namespace

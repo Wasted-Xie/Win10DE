@@ -70,10 +70,11 @@ int main(int argc, char* argv[]) {
     w10de::DesktopWindow desktop;
     configureLayerWindow(&desktop, QStringLiteral("w10de-desktop"),
                          LayerShellQt::Window::LayerBackground,
-                         LayerShellQt::Window::AnchorLeft |
-                             LayerShellQt::Window::AnchorRight |
-                             LayerShellQt::Window::AnchorTop |
-                             LayerShellQt::Window::AnchorBottom,
+                         LayerShellQt::Window::Anchors(
+                             LayerShellQt::Window::AnchorLeft |
+                                 LayerShellQt::Window::AnchorRight |
+                                 LayerShellQt::Window::AnchorTop |
+                                 LayerShellQt::Window::AnchorBottom),
                          0, QMargins(),
                          LayerShellQt::Window::KeyboardInteractivityNone);
     // 壁纸：--wallpaper 优先，否则读配置 ~/.config/w10de/config.ini 的
@@ -91,9 +92,10 @@ int main(int argc, char* argv[]) {
     w10de::TaskbarWindow taskbar;
     configureLayerWindow(&taskbar, QStringLiteral("w10de-taskbar"),
                          LayerShellQt::Window::LayerBottom,
-                         LayerShellQt::Window::AnchorLeft |
-                             LayerShellQt::Window::AnchorRight |
-                             LayerShellQt::Window::AnchorBottom,
+                         LayerShellQt::Window::Anchors(
+                             LayerShellQt::Window::AnchorLeft |
+                                 LayerShellQt::Window::AnchorRight |
+                                 LayerShellQt::Window::AnchorBottom),
                          w10de::theme::kTaskbarHeight,
                          QMargins());
 
@@ -103,8 +105,9 @@ int main(int argc, char* argv[]) {
     // 注：layer-shell-qt 的 hide/show 行为实现时验证。
     configureLayerWindow(&startMenu, QStringLiteral("w10de-startmenu"),
                          LayerShellQt::Window::LayerOverlay,
-                         LayerShellQt::Window::AnchorLeft |
-                             LayerShellQt::Window::AnchorBottom,
+                         LayerShellQt::Window::Anchors(
+                             LayerShellQt::Window::AnchorLeft |
+                                 LayerShellQt::Window::AnchorBottom),
                          0,  // 弹出式，不占独占区
                          QMargins(0, 0, 0, w10de::theme::kTaskbarHeight));
     startMenu.hide();

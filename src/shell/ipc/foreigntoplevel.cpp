@@ -161,7 +161,7 @@ const wl_registry_listener kRegistryListener = {
 ForeignToplevelManager::ForeignToplevelManager(QObject* parent) : QObject(parent) {
     // 获取 Wayland display（Qt 6 的 QNativeInterface::QWaylandApplication）。
     auto* waylandApp =
-        QGuiApplication::nativeInterface<QNativeInterface::QWaylandApplication>();
+        qGuiApp->nativeInterface<QNativeInterface::QWaylandApplication>();
     wl_display* display = waylandApp != nullptr ? waylandApp->display() : nullptr;
     if (display == nullptr) {
         qWarning("ForeignToplevelManager: no Wayland display (not running on Wayland?)");
@@ -181,7 +181,7 @@ ForeignToplevelManager::ForeignToplevelManager(QObject* parent) : QObject(parent
 void ForeignToplevelManager::start() {
     wl_display* display = nullptr;
     if (auto* waylandApp =
-            QGuiApplication::nativeInterface<QNativeInterface::QWaylandApplication>();
+            qGuiApp->nativeInterface<QNativeInterface::QWaylandApplication>();
         waylandApp != nullptr) {
         display = waylandApp->display();
     }

@@ -1,6 +1,7 @@
 #include "tray/sniwatcher.h"
 
 #include <QDBusConnection>
+#include <QDBusMessage>
 #include <QDebug>
 
 namespace w10de {

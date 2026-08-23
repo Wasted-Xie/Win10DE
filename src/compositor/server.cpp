@@ -1,4 +1,5 @@
 #include "compositor/server.h"
+#include "compositor/util.h"
 
 #include <algorithm>
 #include <cstdlib>  // free / getenv / strcmp
@@ -62,7 +63,8 @@ Compositor::~Compositor() {
         xwayland_ = nullptr;
     }
     if (scene_ != nullptr) {
-        wlr_scene_node_destroy(&scene_->tree);
+        // 0.19 无 wlr_scene_destroy：scene 本身是根节点，经 tree.node 销毁。
+        wlr_scene_node_destroy(&scene_->tree.node);
     }
     if (outputLayout_ != nullptr) {
         wlr_output_layout_destroy(outputLayout_);
@@ -253,14 +255,16 @@ bool Compositor::init() {
     // ---- XWayland（X11 客户端兼容，M7；lazy：有 X11 客户端才启动）----
     xwayland_ = wlr_xwayland_create(display_, compositor_, true);
     if (xwayland_ == nullptr) {
-        wlr_log(WLR_ERROR, "failed to create xwayland");
-        return false;
+        // 非致命：headless/无 X11 环境（如 WSL）下 XWayland 不可用，
+        // Wayland 功能不受影响；仅 X11 客户端兼容缺失。
+        wlr_log(WLR_INFO, "xwayland unavailable, X11 clients not supported");
+    } else {
+        wlr_xwayland_set_seat(xwayland_, seat_->seat());
+        newXSurfaceListener_.notify = handleNewXSurface;
+        wl_signal_add(&xwayland_->events.new_surface, &newXSurfaceListener_);
+        xwaylandReadyListener_.notify = handleXWaylandReady;
+        wl_signal_add(&xwayland_->events.ready, &xwaylandReadyListener_);
     }
-    wlr_xwayland_set_seat(xwayland_, seat_->seat());
-    newXSurfaceListener_.notify = handleNewXSurface;
-    wl_signal_add(&xwayland_->events.new_surface, &newXSurfaceListener_);
-    xwaylandReadyListener_.notify = handleXWaylandReady;
-    wl_signal_add(&xwayland_->events.ready, &xwaylandReadyListener_);
 
     if (!wlr_backend_start(backend_)) {
         wlr_log(WLR_ERROR, "failed to start backend");
@@ -279,13 +283,14 @@ int Compositor::run() {
         }
         socket = options_.socketName.c_str();
     } else {
-        char* autoSocket = wl_display_add_socket_auto(display_);
+        const char* autoSocket = wl_display_add_socket_auto(display_);
         if (autoSocket == nullptr) {
             wlr_log(WLR_ERROR, "failed to add display socket");
             return 1;
         }
+        // 注意：返回值指向 display 内部存储的 socket 名（非 strdup），
+        // 不能 free——真实编译验证（free 触发 invalid pointer 崩溃）。
         ownedSocket = autoSocket;
-        free(autoSocket);  // add_socket_auto 返回 strdup 内存
         socket = ownedSocket.c_str();
     }
     wlr_log(WLR_INFO, "Win10DE compositor (M7) running on wayland socket '%s'", socket);
@@ -367,7 +372,7 @@ wlr_output* Compositor::firstOutput() const {
 // ---- 事件回调 ----
 
 void Compositor::handleNewOutput(wl_listener* listener, void* data) {
-    auto* compositor = wl_container_of(listener, compositor, newOutputListener_);
+    auto* compositor = W10DE_CONTAINER_OF(listener, Compositor, newOutputListener_);
     auto* output = static_cast<wlr_output*>(data);
 
     auto out = std::make_unique<Output>(*compositor, output);
@@ -379,13 +384,13 @@ void Compositor::handleNewOutput(wl_listener* listener, void* data) {
 }
 
 void Compositor::handleNewInput(wl_listener* listener, void* data) {
-    auto* compositor = wl_container_of(listener, compositor, newInputListener_);
+    auto* compositor = W10DE_CONTAINER_OF(listener, Compositor, newInputListener_);
     auto* device = static_cast<wlr_input_device*>(data);
     compositor->seat_->handleNewInput(device);
 }
 
 void Compositor::handleNewToplevel(wl_listener* listener, void* data) {
-    auto* compositor = wl_container_of(listener, compositor, newToplevelListener_);
+    auto* compositor = W10DE_CONTAINER_OF(listener, Compositor, newToplevelListener_);
     auto* toplevel = static_cast<wlr_xdg_toplevel*>(data);
 
     auto* view = new View(*compositor, toplevel);
@@ -399,7 +404,7 @@ void Compositor::handleNewToplevel(wl_listener* listener, void* data) {
 }
 
 void Compositor::handleNewDecoration(wl_listener* listener, void* data) {
-    auto* compositor = wl_container_of(listener, compositor, newDecorationListener_);
+    auto* compositor = W10DE_CONTAINER_OF(listener, Compositor, newDecorationListener_);
     auto* decoration = static_cast<wlr_xdg_toplevel_decoration_v1*>(data);
     // 强制服务端装饰（Win10 统一标题栏）。客户端请求（request_mode）
     // 在本里程碑被忽略；M8 视觉打磨时支持客户端切换。
@@ -409,7 +414,7 @@ void Compositor::handleNewDecoration(wl_listener* listener, void* data) {
 }
 
 void Compositor::handleNewLayerSurface(wl_listener* listener, void* data) {
-    auto* compositor = wl_container_of(listener, compositor, newLayerSurfaceListener_);
+    auto* compositor = W10DE_CONTAINER_OF(listener, Compositor, newLayerSurfaceListener_);
     auto* surface = static_cast<wlr_layer_surface_v1*>(data);
 
     auto* layerSurface = new LayerSurface(*compositor, surface);
@@ -537,7 +542,7 @@ void Compositor::launchLockScreen() {
 }
 
 void Compositor::handleNewLock(wl_listener* listener, void* data) {
-    auto* compositor = wl_container_of(listener, compositor, newLockListener_);
+    auto* compositor = W10DE_CONTAINER_OF(listener, Compositor, newLockListener_);
     auto* lock = static_cast<wlr_session_lock_v1*>(data);
     if (compositor->sessionLock_ != nullptr) {
         // 不支持的第二个锁：销毁（发送 finished），避免客户端永久等待 locked。
@@ -558,7 +563,7 @@ void Compositor::handleNewLock(wl_listener* listener, void* data) {
 }
 
 void Compositor::handleLockNewSurface(wl_listener* listener, void* data) {
-    auto* compositor = wl_container_of(listener, compositor, lockNewSurfaceListener_);
+    auto* compositor = W10DE_CONTAINER_OF(listener, Compositor, lockNewSurfaceListener_);
     auto* lockSurface = static_cast<wlr_session_lock_surface_v1*>(data);
     if (compositor->sessionLockSurface_ != nullptr) {
         wlr_log(WLR_ERROR, "multiple lock surfaces not supported; ignoring");
@@ -588,13 +593,13 @@ void Compositor::handleLockNewSurface(wl_listener* listener, void* data) {
     if (!compositor->outputSize(&w, &h)) {
         w = compositor->options().width;
         h = compositor->options().height;
-        wlr_log(WLR_WARNING, "no output for lock surface; using fallback %dx%d", w, h);
+        wlr_log(WLR_INFO, "no output for lock surface; using fallback %dx%d", w, h);
     }
     wlr_session_lock_surface_v1_configure(lockSurface, w, h);
 }
 
 void Compositor::handleLockSurfaceMap(wl_listener* listener, void* /*data*/) {
-    auto* compositor = wl_container_of(listener, compositor, lockSurfaceMapListener_);
+    auto* compositor = W10DE_CONTAINER_OF(listener, Compositor, lockSurfaceMapListener_);
     // 锁屏 surface 显示：置顶、隐藏普通内容、聚焦锁屏。
     if (compositor->sessionLockSceneSurface_ != nullptr) {
         wlr_scene_node_raise_to_top(&compositor->sessionLockSceneSurface_->buffer->node);
@@ -606,7 +611,7 @@ void Compositor::handleLockSurfaceMap(wl_listener* listener, void* /*data*/) {
 }
 
 void Compositor::handleLockUnlock(wl_listener* listener, void* /*data*/) {
-    auto* compositor = wl_container_of(listener, compositor, lockUnlockListener_);
+    auto* compositor = W10DE_CONTAINER_OF(listener, Compositor, lockUnlockListener_);
     compositor->setSessionLocked(false);
     // 立即禁用锁屏场景节点（客户端销毁 surface 前有窗口期，防止画面残留）。
     if (compositor->sessionLockSceneSurface_ != nullptr) {
@@ -633,7 +638,7 @@ void Compositor::handleLockUnlock(wl_listener* listener, void* /*data*/) {
 }
 
 void Compositor::handleLockDestroy(wl_listener* listener, void* /*data*/) {
-    auto* compositor = wl_container_of(listener, compositor, lockDestroyListener_);
+    auto* compositor = W10DE_CONTAINER_OF(listener, Compositor, lockDestroyListener_);
     // 锁对象销毁（客户端崩溃/正常结束）：先摘除挂在其事件上的监听，
     // 否则 wlr_session_lock_v1_destroy 的 assert(empty(listeners)) 会 abort。
     wl_list_remove(&compositor->lockNewSurfaceListener_.link);
@@ -655,7 +660,7 @@ void Compositor::handleLockDestroy(wl_listener* listener, void* /*data*/) {
 }
 
 void Compositor::handleLockSurfaceDestroy(wl_listener* listener, void* /*data*/) {
-    auto* compositor = wl_container_of(listener, compositor, lockSurfaceDestroyListener_);
+    auto* compositor = W10DE_CONTAINER_OF(listener, Compositor, lockSurfaceDestroyListener_);
     // 先摘除挂在该 surface/对象上的监听，避免 wlroots 销毁断言。
     wl_list_remove(&compositor->lockSurfaceMapListener_.link);
     wl_list_init(&compositor->lockSurfaceMapListener_.link);
@@ -668,7 +673,7 @@ void Compositor::handleLockSurfaceDestroy(wl_listener* listener, void* /*data*/)
 // ---- XWayland ----
 
 void Compositor::handleNewXSurface(wl_listener* listener, void* data) {
-    auto* compositor = wl_container_of(listener, compositor, newXSurfaceListener_);
+    auto* compositor = W10DE_CONTAINER_OF(listener, Compositor, newXSurfaceListener_);
     auto* xsurface = static_cast<wlr_xwayland_surface*>(data);
     // 所有权为自身（destroy 回调 delete this）；map 时加入列表。
     auto* view = new XView(*compositor, xsurface);
@@ -679,7 +684,7 @@ void Compositor::handleNewXSurface(wl_listener* listener, void* data) {
 }
 
 void Compositor::handleXWaylandReady(wl_listener* listener, void* /*data*/) {
-    auto* compositor = wl_container_of(listener, compositor, xwaylandReadyListener_);
+    auto* compositor = W10DE_CONTAINER_OF(listener, Compositor, xwaylandReadyListener_);
     // XWayland 就绪：向环境暴露 DISPLAY（X11 客户端连接用）。
     if (compositor->xwayland_ != nullptr &&
             compositor->xwayland_->display_name != nullptr) {

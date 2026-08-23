@@ -36,7 +36,7 @@
 | M7 | 会话集成（launcher/autostart/配置）、XWayland、多工作区 | ⬜ 未开始 |
 | M8 | 视觉打磨（圆角/阴影/动画/Aero Snap） | ⬜ 未开始 |
 
-**验证状态**：三轮子代理静态审查全部完成（第 1/2 轮各 4 组并行 + 失败重试，第 3 轮最终验证 4 组并行 + 输入层重拉），三轮共发现 **92 个问题**（10 CRITICAL + 15 HIGH + 32 MEDIUM + 35 LOW），全部修复或标注（5 项为可接受风险未修：XWayland/xdg 命中 z 序不统一、output 热插拔无 destroy listener、窄窗口 w<46 三按钮重叠、多输出 lock surface 只覆盖首输出、wl_seat min(7) 版本约束）。但**从未真实编译**。
+**验证状态**：三轮子代理静态审查全部完成（共 92 问题：10 CRITICAL + 15 HIGH + 32 MEDIUM + 35 LOW，全部修复或标注，5 项可接受风险）。**2026-08 完成首次真实编译与 headless 冒烟**（WSL2 Arch：vendored wlroots 0.19 源码编译 + 三个二进制构建成功 + `--frames 5` 截图 `pixel verification passed` 中心 #0078D7，退出码 0）。编译期修复详见 README「首次真实编译」节；**vendored 头补丁**（wlr_scene.h `[static 4]`×2、xwayland.h `class`、wlr_layer_shell_v1.h `namespace` + 生成协议头 `namespace`）必须在新装/重装 wlroots 时再次应用。
 
 ---
 
@@ -120,6 +120,11 @@ w10shell（Qt 6 Widgets，layer-shell 客户端）
 | **上游依赖合规**：Qt / layer-shell-qt 仅**动态链接**；vendored（wlroots/stb/ext-session-lock.xml）原样保留版权声明；README 有"依赖与许可证"章节 | 遵守上游许可（LGPL 动态链接义务）；唯一 GPL 项 hwdata 为数据文件、D-Bus 为独立进程，均不构成链接；本项目可自由选协议 |
 | **README 顶部免责声明**："Not affiliated with Microsoft"（中英双语） | "Windows" 为微软商标；仿 Win10 界面需声明独立非官方，避免误导/商标纠纷 |
 | **项目协议：MIT**（根目录 LICENSE，版权人 XieYuxuan，GitHub 仓库创建时添加） | 与全部上游（MIT/Public Domain/LGPL 动态链接）兼容；copyleft 无传染；社区零摩擦 |
+| **vendored wlroots 头 C++ 补丁**（4 处，首编实测）：`wlr_scene.h` `[static 4]`→`[4]`×2（g++16 拒绝 C99 语法）、`xwayland.h` `class`→`class_`、`wlr_layer_shell_v1.h` `namespace`→`namespace_` + 生成协议头同步 | wlroots 头按 C 设计，C++ 关键字/语法不兼容；补丁仅改头不改实现，行为等价；**重新编译/安装 wlroots 时必须再次应用**（README 编译记录） |
+| **`W10DE_CONTAINER_OF` 宏**（`src/compositor/util.h`）替代裸 `wl_container_of` | C++ 中 `auto* x = wl_container_of(l, x, m)` 自引用报 "use before deduction of auto"（首编实测 57 处）；宏用 `static_cast<Type*>(nullptr)` 提供显式类型 |
+| **wlr 头 `extern "C"` 包裹**（6 个头文件） | wlroots 头无 C++ 保护，C++ 解析头需手动包裹（server.cpp 原本已包） |
+| **XWayland 创建失败降级为警告**（不致命） | headless/WSL 无 X11 环境（`/tmp/.X11-unix` 只读挂载）下应继续运行；X11 客户端兼容缺失可接受 |
+| **headless 帧循环：每帧 `wlr_output_schedule_frame`** | headless 后端 frame timer 仅在 enable commit 时续期，不显式调度渲染停在第二帧（首编实测） |
 
 ---
 
@@ -157,8 +162,9 @@ src/compositor/
   xview.{h,cpp}                     # XView：XWayland 窗口（M7，无装饰基础版）
   seat.{h,cpp}                      # Seat：输入/焦点/拖动/装饰交互/层表面命中
   layer_shell.{h,cpp}               # LayerSurface：层表面管理/命中
+  util.h                            # W10DE_CONTAINER_OF 宏（C++ 版 container_of）
   main.cpp                          # 参数解析
-  CMakeLists.txt                    # WLR_USE_UNSTABLE、PkgConfig::WLROOTS/DRM/XKBCOMMON
+  CMakeLists.txt                    # WLR_USE_UNSTABLE、PkgConfig::WLROOTS/DRM/XKBCOMMON/WAYLAND_SERVER
 
 src/shell/
   main.cpp                          # 入口：layer-shell 配置（桌面/任务栏/开始菜单）+ --wallpaper
@@ -200,15 +206,17 @@ third_party/
 
 ## 7. 已知问题与待验证项（按优先级）
 
-### 7.1 编译验证（最高优先）
-1. **全部代码未编译**。预期错误：`[static 4]` C99 数组参数语法在 C++ 的接受度（wlroots 0.19 被 wayfire 等 C++ 项目使用，大概率按扩展接受，需确认）、Qt/layer-shell-qt API 细节。
-2. **LayerShellQt CMake 集成**：`find_package(LayerShellQt REQUIRED)` 包名与 target 名可能为 `LayerShellQt6`/`LayerShellQt::LayerShellQt`（实现时按发行版确认）。
-3. **layer-shell-qt 配置时序**：部分版本需 `show → 配置 → hide → show` 序列（代码已注释标注）。
-4. **枚举名**：`LayerShellQt::Window::Layer/Anchors/KeyboardInteractivity*` 具体枚举名待编译确认。
+### 7.1 编译验证（✅ 2026-08 已在 WSL2 Arch 完成首编，以下为结论）
+1. ~~`[static 4]` C99 语法~~ ✅ **g++16 不接受**：vendored `wlr_scene.h` 补丁为 `color[4]`（见 README 编译记录）。
+2. ~~LayerShellQt CMake target~~ ✅ Arch 为 `LayerShellQt::Interface`（CMake 已兼容两种名字）；`find_package(LayerShellQt)` 包名正确。
+3. **layer-shell-qt 配置时序**（`show → 配置 → hide → show`）：**未实测**（headless 冒烟未运行 shell；嵌套验证时确认）。`useLayerShell()` 在 Qt≥6.5 已废弃（无害）。
+4. ~~枚举名~~ ✅ `Anchors` 需显式构造（`Anchors(...)`），其余枚举名正确。
 
 ### 7.2 行为待验证
-- headless 冒烟：`w10compositor --frames 5 --screenshot /tmp/x.png` 应输出 `pixel verification passed`（背景 #0078D7 纯色 1920x1080）。
-- 嵌套验证（wayland backend + weston/WSLg）：开窗口、拖动、标题栏按钮、任务栏窗口列表、开始菜单。
+- ✅ headless 冒烟已通过（2026-08：`pixel verification passed`，#0078D7，退出码 0）。
+- ⬜ 嵌套验证（wayland backend + WSLg/weston）：开窗口、拖动、标题栏按钮、任务栏窗口列表、开始菜单、锁屏（Win+L）。
+- ⬜ XWayland：WSL 中 `/tmp/.X11-unix` 为只读挂载导致 wlr_xwayland 创建失败（已降级为警告）；真机验证 X11 客户端。
+- ⬜ DRM 真机：headless 之外的后端需真机/KVM。
 
 ### 7.3 已知简化（M3 阶段刻意为之）
 - 开始菜单无搜索框、无固定磁贴（仅 .desktop 列表网格）。
