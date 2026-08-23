@@ -119,6 +119,7 @@ w10shell（Qt 6 Widgets，layer-shell 客户端）
 | 锁屏渲染用 **wl_shm + QPainter 离屏**（w10lock 独立进程） | 锁定时合成器隐藏所有其他客户端（含 shell），锁屏必须自渲染自输入；QGuiApplication 提供 display，QImage(Format_ARGB32) 字节序与 WL_SHM_FORMAT_ARGB8888 一致可直拷 |
 | **上游依赖合规**：Qt / layer-shell-qt 仅**动态链接**；vendored（wlroots/stb/ext-session-lock.xml）原样保留版权声明；README 有"依赖与许可证"章节 | 遵守上游许可（LGPL 动态链接义务）；唯一 GPL 项 hwdata 为数据文件、D-Bus 为独立进程，均不构成链接；本项目可自由选协议 |
 | **README 顶部免责声明**："Not affiliated with Microsoft"（中英双语） | "Windows" 为微软商标；仿 Win10 界面需声明独立非官方，避免误导/商标纠纷 |
+| **项目协议：MIT**（根目录 LICENSE，版权人 XieYuxuan，GitHub 仓库创建时添加） | 与全部上游（MIT/Public Domain/LGPL 动态链接）兼容；copyleft 无传染；社区零摩擦 |
 
 ---
 

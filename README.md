@@ -147,7 +147,8 @@ WLR_BACKEND=wayland ./build/src/compositor/w10compositor --frames 0
 - **Qt 6 / layer-shell-qt 仅动态链接**（LGPL 义务：不静态链接、不修改上游源码、保留许可声明）；
 - `third_party/` 的 vendored 源码（wlroots、stb）与 `protocols/` 的协议 XML
   **原样保留上游版权声明**；
-- 全部依赖无传染性 copyleft **库**链接，本项目可自行选择开源协议。
+- 全部依赖无传染性 copyleft **库**链接，本项目采用 **MIT 协议**（见根目录
+  [LICENSE](LICENSE)），与全部上游依赖完全兼容。
 
 | 上游项目 | 用途 | 许可证 | 使用方式 |
 |---|---|---|---|

@@ -35,14 +35,14 @@
 
 | 选项 | 适用 |
 |------|------|
-| **MIT**（推荐） | 最宽松，与 wlroots 一致，社区零摩擦 |
-| **Apache-2.0** | 宽松 + 专利授权，商业友好 |
-| **GPL-3.0** | copyleft，禁止衍生闭源（与 LGPL 依赖兼容） |
-| **LGPL-3.0** | 折中 |
+| **MIT**（✅ 已选用：根目录 `LICENSE`，版权人 XieYuxuan） | 最宽松，与 wlroots 一致，社区零摩擦 |
+| Apache-2.0 | 宽松 + 专利授权，商业友好（未选用） |
+| GPL-3.0 | copyleft，禁止衍生闭源（与 LGPL 依赖兼容）（未选用） |
+| LGPL-3.0 | 折中（未选用） |
 
 ## 四、开源前合规操作清单
 
-1. [ ] 根目录添加你选择的 LICENSE 文件
+1. [x] 根目录添加你选择的 LICENSE 文件（**MIT**，GitHub 创建仓库时添加，已并入本地）
 2. [ ] 编写 `THIRD_PARTY_NOTICES.md`（引用本清单）
 3. [ ] 确认 `third_party/wlroots/LICENSE`、`third_party/stb` 版权声明**原样保留**（vendored 必需）
 4. [ ] 检查 src/ 是否有直接复制自 wlroots/Qt 的代码段（保留其文件头版权）
