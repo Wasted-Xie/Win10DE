@@ -129,6 +129,8 @@ w10shell（Qt 6 Widgets，layer-shell 客户端）
 | **`arrangeLayers` 仅按 `!initialized` 过滤**（不按 mapped） | 未 map 表面需要首次 configure 才能 map；按 mapped 过滤会死锁（Qt 层表面永远等不到 configure，渲染验证实测） |
 | **layer-shell-qt 时序：`winId() → get/配置 → show()`** | Qt 6.11 QPA 不允许 show 后切换 shell integration（"already has a shell integration"）；`useLayerShell()` 在 Qt 6.5+ 为废弃 no-op |
 | **截图校验：内容多样性检测**（多色即通过，纯色校验背景） | M0 的中心==纯背景假设在有 shell 内容时误判（壁纸渐变覆盖中心，实测 center=#0073CD） |
+| **开始菜单 `margin.bottom=0`**（overlay 层） | overlay 层 bounds 是可用区（已排除任务栏独占区），再设底边距会双重避让——实测菜单与任务栏间 49px 空隙，改为 0 后 1px |
+| **开始按钮 = 发行版 logo**（`/usr/share/pixmaps/archlinux-logo.svg`，缺失回退文字） | 系统发行版图标替代"开始"文字（Arch 蓝 #1793D1 实测渲染） |
 
 ---
 

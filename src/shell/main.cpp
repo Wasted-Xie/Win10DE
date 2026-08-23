@@ -113,7 +113,10 @@ int main(int argc, char* argv[]) {
                              LayerShellQt::Window::AnchorLeft |
                                  LayerShellQt::Window::AnchorBottom),
                          0,  // 弹出式，不占独占区
-                         QMargins(0, 0, 0, w10de::theme::kTaskbarHeight));
+                         QMargins());
+    // 底边距必须为 0：overlay 层 surface 的 bounds 是可用区（已排除任务栏
+    // 独占的 kTaskbarHeight），再设底边距会双重避让、菜单与任务栏间留出
+    // 空隙（渲染验证实测：菜单底比任务栏顶高 49px）。
     startMenu.hide();
 
     // 开始按钮切换开始菜单。
