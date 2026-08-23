@@ -119,7 +119,7 @@ w10shell（Qt 6 Widgets，layer-shell 客户端）
 | 锁屏渲染用 **wl_shm + QPainter 离屏**（w10lock 独立进程） | 锁定时合成器隐藏所有其他客户端（含 shell），锁屏必须自渲染自输入；QGuiApplication 提供 display，QImage(Format_ARGB32) 字节序与 WL_SHM_FORMAT_ARGB8888 一致可直拷 |
 | **上游依赖合规**：Qt / layer-shell-qt 仅**动态链接**；vendored（wlroots/stb/ext-session-lock.xml）原样保留版权声明；README 有"依赖与许可证"章节 | 遵守上游许可（LGPL 动态链接义务）；唯一 GPL 项 hwdata 为数据文件、D-Bus 为独立进程，均不构成链接；本项目可自由选协议 |
 | **README 顶部免责声明**："Not affiliated with Microsoft"（中英双语） | "Windows" 为微软商标；仿 Win10 界面需声明独立非官方，避免误导/商标纠纷 |
-| **项目协议：MIT**（根目录 LICENSE，版权人 XieYuxuan，GitHub 仓库创建时添加） | 与全部上游（MIT/Public Domain/LGPL 动态链接）兼容；copyleft 无传染；社区零摩擦 |
+| **项目协议：MIT**（根目录 LICENSE，版权人 Wasted-Xie，GitHub 仓库创建时添加） | 与全部上游（MIT/Public Domain/LGPL 动态链接）兼容；copyleft 无传染；社区零摩擦 |
 | **vendored wlroots 头 C++ 补丁**（4 处，首编实测）：`wlr_scene.h` `[static 4]`→`[4]`×2（g++16 拒绝 C99 语法）、`xwayland.h` `class`→`class_`、`wlr_layer_shell_v1.h` `namespace`→`namespace_` + 生成协议头同步 | wlroots 头按 C 设计，C++ 关键字/语法不兼容；补丁仅改头不改实现，行为等价；**重新编译/安装 wlroots 时必须再次应用**（README 编译记录） |
 | **`W10DE_CONTAINER_OF` 宏**（`src/compositor/util.h`）替代裸 `wl_container_of` | C++ 中 `auto* x = wl_container_of(l, x, m)` 自引用报 "use before deduction of auto"（首编实测 57 处）；宏用 `static_cast<Type*>(nullptr)` 提供显式类型 |
 | **wlr 头 `extern "C"` 包裹**（6 个头文件） | wlroots 头无 C++ 保护，C++ 解析头需手动包裹（server.cpp 原本已包） |
