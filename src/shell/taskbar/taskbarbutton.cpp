@@ -27,8 +27,12 @@ void TaskbarButton::updateFromHandle() {
     setText(label);
 
     // 激活窗口高亮，最小化窗口置灰。
-    const QString bg = handle_->activated() ? theme::kAccentBlue.name()
-                                            : theme::kHoverBackground.name();
+    // 激活态文字固定用 accentText（白）：浅色主题下黑字 on #0078D7 仅
+    // 3.87:1 对比不足（审查 t2/t3）。
+    const QString bg = handle_->activated() ? theme::kAccentBlue().name()
+                                            : theme::kHoverBackground().name();
+    const QString fg = handle_->activated() ? theme::kAccentText().name()
+                                            : theme::kTextPrimary().name();
     setStyleSheet(QStringLiteral(
         "QPushButton {"
         "  color: %1;"
@@ -38,7 +42,7 @@ void TaskbarButton::updateFromHandle() {
         "  font-size: 12px;"
         "}"
         "QPushButton:hover { background: %3; }")
-        .arg(theme::kTextPrimary.name(), bg, theme::kPressedBackground.name()));
+        .arg(fg, bg, theme::kPressedBackground().name()));
 }
 
 }  // namespace w10de

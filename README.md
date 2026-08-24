@@ -59,6 +59,8 @@ Linux 上的 Windows 10 风格桌面环境，从零实现。
 - [x] M7 续：**多工作区**（窗口归属/切换/显示隐藏，Win+1..4；headless 4 场景验证通过）
 - [x] M7 续：**XWayland SSD 装饰 + 任务栏集成**（XView 同款 Win10 标题栏 + foreign-toplevel handle；WSL 无 XWayland 未运行时验证）
 - [x] M8 视觉打磨：窗口阴影（自绘渐变）、Aero Snap（Win+←/→/↑/↓ + 平滑动画）、窗口移动动画；圆角遵循 Win10 直角设计（UI 元素 Qt 侧 2px 圆角）（2026-08 验证通过）
+- [x] **主题功能**：`[theme]` 配置段（compositor 与 w10shell 共用）——`mode=dark/light` 预设
+      + 任意颜色键覆盖（自定义主题通道）；深色/浅色/自定义三态 headless 验证通过（2026-08）
 - [x] 编译与冒烟验证（headless 运行 + 截图 + 像素校验，2026-08 Arch/WSL2 通过）
 - [x] 完整渲染验证（compositor + w10shell 同跑：桌面壁纸渐变 + 任务栏渲染成功，2026-08）
 - [ ] 真机/嵌套环境验证（DRM、XWayland 运行时、鼠标键盘实际交互）
@@ -249,6 +251,24 @@ WLR_BACKEND=wayland ./build/src/compositor/w10compositor --frames 0
   `beginResize` 补 cancelAnimation；快捷键仅纯 LOGO 组合（排除 Shift/Ctrl/Alt）；
   多输出下动画仅第一输出推进（速度不翻倍）；unmap/dissociate 取消动画；
   shadow.cpp 用 W10DE_CONTAINER_OF + nothrow 分配。全部修复后回归验证通过。
+- **主题功能**（2026-08）：新增 `src/ipc/theme.{h,cpp}`（共享主题定义，无 Qt 依赖）
+  与 `src/shell/theme/colors.cpp`（shell 侧加载）。`~/.config/w10de/config.ini` 的
+  `[theme]` 段：`mode = dark|light` 预设 + 14 个颜色键覆盖（`taskbar_bg`/`menu_bg`/
+  `menu_sidebar`/`titlebar_bg`/`button_bg`/`button_hover`/`close_bg`/`close_hover`/
+  `text_primary`/`text_secondary`/`hover_bg`/`pressed_bg`/`accent`/`desktop_bg`，
+  `#RRGGBB` 格式）。compositor（标题栏/按钮/hover/标题文字/桌面背景/截图校验）
+  与 w10shell（任务栏/开始菜单/时钟/窗口列表/托盘）读同一配置，两进程视觉一致。
+  验证：深色默认（回归白字 385/红钮 1472/任务栏 #2D2D2D）、浅色模式（任务栏与
+  标题栏 #F3F3F3 + 深色文字，无纯白残留）、自定义键覆盖（`taskbar_bg=#123456`、
+  `titlebar_bg=#654321` 双进程生效）全部 PASS。
+- **主题审查修复**（AgentTeams 三成员审查：compositor 核心/shell 接入/交叉一致性，
+  t1-t3）：无严重问题；修复 5 中等 + 若干轻微——compositor 空配置回退深色预设
+  （原为全黑）；w10shell 增加 `--config` 参数与 compositor 对齐（自定义路径时
+  主题/壁纸不分叉）；新增 `accent_text` 键（任务栏激活高亮文字固定白，浅色下
+  黑字 on #0078D7 仅 3.87:1 对比不足）；桌面图标区主题化（文字/高亮跟随主题，
+  原硬编码白色）；浅色预设菜单背景调浅 #F0F0F0（与磁贴 #E5E5E5 可辨）；注释/
+  配置示例同步（menu_sidebar/accent_text 键、非法值回退语义、mode 语义）。
+  修复后深色/浅色/自定义/完整渲染四组验证全部 PASS。
 
 ### 已知待验证项（编译时确认）
 

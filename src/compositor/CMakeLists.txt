@@ -14,6 +14,7 @@ add_executable(w10compositor
     titletext.cpp
     shadow.cpp
     ${CMAKE_SOURCE_DIR}/src/ipc/config.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/theme.cpp
 )
 
 target_include_directories(w10compositor PRIVATE

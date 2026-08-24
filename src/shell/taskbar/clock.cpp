@@ -11,7 +11,7 @@ namespace w10de {
 Clock::Clock(QWidget* parent) : QLabel(parent) {
     setAlignment(Qt::AlignCenter);
     setStyleSheet(QStringLiteral("color: %1; background: transparent;")
-                      .arg(theme::kTextSecondary.name()));
+                      .arg(theme::kTextSecondary().name()));
     updateTime();
 
     timer_ = new QTimer(this);

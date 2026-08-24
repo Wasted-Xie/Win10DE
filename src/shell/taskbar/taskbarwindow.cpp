@@ -14,7 +14,7 @@ namespace w10de {
 TaskbarWindow::TaskbarWindow(QWidget* parent) : QWidget(parent) {
     setFixedHeight(theme::kTaskbarHeight);
     setStyleSheet(QStringLiteral("QWidget { background: %1; }")
-                      .arg(theme::kTaskbarBackground.name()));
+                      .arg(theme::kTaskbarBackground().name()));
 
     layout_ = new QHBoxLayout(this);
     layout_->setContentsMargins(0, 0, 0, 0);

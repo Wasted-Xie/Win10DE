@@ -411,10 +411,12 @@ void View::createDecoration() {
         wlr_log(WLR_ERROR, "failed to create decoration tree");
         return;
     }
-    // Win10 深色标题栏 #2D2D2D；按钮：最小化/最大化浅灰，关闭红色。
-    const float titleBarColor[4] = {0x2D / 255.0f, 0x2D / 255.0f, 0x2D / 255.0f, 1.0f};
-    const float buttonColor[4] = {0x3C / 255.0f, 0x3C / 255.0f, 0x3C / 255.0f, 1.0f};
-    const float closeColor[4] = {0xE8 / 255.0f, 0x11 / 255.0f, 0x23 / 255.0f, 1.0f};
+    // Win10 标题栏（主题驱动：mode dark/light 或自定义键，见 ipc/theme.h）。
+    const Theme& th = compositor_.theme();
+    float titleBarColor[4], buttonColor[4], closeColor[4];
+    themeColorToFloat(th.titlebarBg, titleBarColor);
+    themeColorToFloat(th.buttonBg, buttonColor);
+    themeColorToFloat(th.closeBg, closeColor);
 
     // z 序（decorationTree_ 子节点，后创建者在上）：
     //   1. 窗口阴影（最底，覆盖窗口外 8px）
@@ -438,6 +440,13 @@ void View::createDecoration() {
     minButtonRect_ = wlr_scene_rect_create(decorationTree_, kButtonWidth, kTitleBarHeight, buttonColor);
     maxButtonRect_ = wlr_scene_rect_create(decorationTree_, kButtonWidth, kTitleBarHeight, buttonColor);
     closeButtonRect_ = wlr_scene_rect_create(decorationTree_, kButtonWidth, kTitleBarHeight, closeColor);
+    // 审查 t1：rect 创建失败判空（与 xview.cpp 风格一致；失败仅缺该节点，
+    // 其余路径判空安全）。
+    if (titleBarRect_ == nullptr || minButtonRect_ == nullptr ||
+            maxButtonRect_ == nullptr || closeButtonRect_ == nullptr) {
+        wlr_log(WLR_ERROR, "failed to create decoration rects");
+        return;
+    }
 
     // 未映射时隐藏。
     wlr_scene_node_set_enabled(&decorationTree_->node, false);
@@ -490,9 +499,10 @@ void View::renderTitle() {
     // 防止旧文字残留（覆盖按钮或显示过期标题）。
     TitleTextBuffer* next = nullptr;
     if (textW > 0 && t != nullptr && *t != '\0') {
-        // 白字（Win10 标题栏文字）。
-        static const float kTextColor[3] = {1.0f, 1.0f, 1.0f};
-        next = renderTitleText(t, textW, kTitleBarHeight, kTextColor);
+        // 标题文字颜色（主题驱动：深色主题白字、浅色主题深字）。
+        const ThemeColor& tc = compositor_.theme().textPrimary;
+        const float textColor[3] = {tc.r / 255.0f, tc.g / 255.0f, tc.b / 255.0f};
+        next = renderTitleText(t, textW, kTitleBarHeight, textColor);
     }
     if (next == nullptr && titleText_ == nullptr) {
         return;  // 无旧文字可清，跳过（避免每帧重复 set_buffer(NULL)）
@@ -542,11 +552,13 @@ void View::setHoverArea(DecorationArea area) {
         return;
     }
     hoverArea_ = area;
-    // hover 打磨：按钮背景高亮（关闭更亮红）。
-    const float defaultButton[4] = {0x3C / 255.0f, 0x3C / 255.0f, 0x3C / 255.0f, 1.0f};
-    const float hoverButton[4] = {0x5C / 255.0f, 0x5C / 255.0f, 0x5C / 255.0f, 1.0f};
-    const float defaultClose[4] = {0xE8 / 255.0f, 0x11 / 255.0f, 0x23 / 255.0f, 1.0f};
-    const float hoverClose[4] = {0xF1 / 255.0f, 0x70 / 255.0f, 0x7A / 255.0f, 1.0f};
+    // hover 打磨：按钮背景高亮（关闭更亮红）；颜色来自主题（自定义通道）。
+    const Theme& th = compositor_.theme();
+    float defaultButton[4], hoverButton[4], defaultClose[4], hoverClose[4];
+    themeColorToFloat(th.buttonBg, defaultButton);
+    themeColorToFloat(th.buttonHover, hoverButton);
+    themeColorToFloat(th.closeBg, defaultClose);
+    themeColorToFloat(th.closeHover, hoverClose);
     if (minButtonRect_ != nullptr) {
         wlr_scene_rect_set_color(minButtonRect_,
             area == DecorationArea::MinButton ? hoverButton : defaultButton);

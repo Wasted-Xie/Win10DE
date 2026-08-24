@@ -32,10 +32,10 @@ TileButton::TileButton(const QString& name, const QString& iconName,
         "}"
         "QToolButton:hover { background: %3; }"
         "QToolButton:pressed { background: %4; }")
-        .arg(theme::kTextPrimary.name(),
-             theme::kHoverBackground.name(),
-             theme::kPressedBackground.name(),
-             theme::kPressedBackground.name()));
+        .arg(theme::kTextPrimary().name(),
+             theme::kHoverBackground().name(),
+             theme::kPressedBackground().name(),
+             theme::kPressedBackground().name()));
     connect(this, &QToolButton::clicked,
             this, [this]() { emit launchRequested(exec_); });
     applySize();
@@ -94,10 +94,10 @@ void TileButton::contextMenuEvent(QContextMenuEvent* event) {
         "QMenu { background: %1; color: %2; border: 1px solid %3; }"
         "QMenu::item { padding: 6px 16px; }"
         "QMenu::item:selected { background: %4; }")
-        .arg(theme::kStartMenuBackground.name(),
-             theme::kTextPrimary.name(),
-             theme::kHoverBackground.name(),
-             theme::kPressedBackground.name()));
+        .arg(theme::kStartMenuBackground().name(),
+             theme::kTextPrimary().name(),
+             theme::kHoverBackground().name(),
+             theme::kPressedBackground().name()));
     QAction* small = menu.addAction(QStringLiteral("小 (48×48)"));
     QAction* medium = menu.addAction(QStringLiteral("中 (100×100)"));
     QAction* large = menu.addAction(QStringLiteral("大 (204×204)"));

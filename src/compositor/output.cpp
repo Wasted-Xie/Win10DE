@@ -15,10 +15,7 @@ namespace w10de {
 
 namespace {
 
-// 期望的背景色（Win10 蓝 #0078D7），与构造中 scene rect 一致。
-constexpr uint8_t kExpectedBgR = 0x00;
-constexpr uint8_t kExpectedBgG = 0x78;
-constexpr uint8_t kExpectedBgB = 0xD7;
+// 截图验证：单色画面时校验中心像素==桌面背景色（主题驱动，见 takeScreenshot）。
 
 // 把 DRM 四字符码格式的一行像素（XRGB8888/ARGB8888/XBGR8888/ABGR8888）
 // 转换为 stb 期望的 RGBA 顺序。返回 false 表示格式不支持。
@@ -104,14 +101,15 @@ Output::Output(Compositor& compositor, wlr_output* output)
         ly = layoutOutput->y;
     }
 
-    // 背景矩形铺满输出实际分辨率（Win10 蓝 #0078D7，预乘浮点颜色）。
+    // 背景矩形铺满输出实际分辨率（Win10 蓝 #0078D7 默认；主题驱动）。
     // 注意：不能用 options 的固定尺寸（DRM 后端输出分辨率由系统决定）。
     // 挂到 backgroundAnchor：位于所有窗口之下。
     int bgW = 0, bgH = 0;
     wlr_output_effective_resolution(output_, &bgW, &bgH);
     if (bgW < 1) bgW = 1;
     if (bgH < 1) bgH = 1;
-    const float bgColor[4] = {0.0f, 0x78 / 255.0f, 0xD7 / 255.0f, 1.0f};
+    const ThemeColor& bg = compositor.theme().desktopBg;
+    const float bgColor[4] = {bg.r / 255.0f, bg.g / 255.0f, bg.b / 255.0f, 1.0f};
     backgroundRect_ = wlr_scene_rect_create(compositor.backgroundAnchor(), bgW, bgH, bgColor);
     if (backgroundRect_ == nullptr) {
         wlr_log(WLR_ERROR, "failed to create background rect on '%s'", output_->name);
@@ -253,8 +251,10 @@ bool Output::takeScreenshot(const std::string& path) {
                 rgba[center], rgba[center + 1], rgba[center + 2]);
         return true;
     }
-    if (rgba[center] == kExpectedBgR && rgba[center + 1] == kExpectedBgG &&
-            rgba[center + 2] == kExpectedBgB) {
+    // 纯色画面：校验中心 == 桌面背景色（主题驱动）。
+    const ThemeColor& bg = compositor_.theme().desktopBg;
+    if (rgba[center] == bg.r && rgba[center + 1] == bg.g &&
+            rgba[center + 2] == bg.b) {
         wlr_log(WLR_INFO, "pixel verification passed (solid background, "
                 "center = #%02X%02X%02X)",
                 rgba[center], rgba[center + 1], rgba[center + 2]);
@@ -262,7 +262,7 @@ bool Output::takeScreenshot(const std::string& path) {
     }
     wlr_log(WLR_ERROR, "pixel verification FAILED: center = #%02X%02X%02X, expected #%02X%02X%02X",
             rgba[center], rgba[center + 1], rgba[center + 2],
-            kExpectedBgR, kExpectedBgG, kExpectedBgB);
+            bg.r, bg.g, bg.b);
     return false;
 }
 

@@ -28,6 +28,7 @@ add_custom_command(
 
 add_executable(w10shell
     main.cpp
+    theme/colors.cpp
     desktop/desktopwindow.cpp
     taskbar/taskbarwindow.cpp
     taskbar/clock.cpp
@@ -43,6 +44,7 @@ add_executable(w10shell
     ipc/lockservice.cpp
     ipc/foreigntoplevel.cpp
     ${CMAKE_SOURCE_DIR}/src/ipc/config.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/theme.cpp
     ${FOREIGN_TOPLEVEL_SRC}
     ${FOREIGN_TOPLEVEL_HDR}   # 生成头列入依赖，避免并行构建时序竞争
 )

@@ -10,6 +10,8 @@
 #include <QStandardPaths>
 #include <QUrl>
 
+#include "theme/colors.h"
+
 namespace w10de {
 
 namespace {
@@ -32,16 +34,23 @@ DesktopWindow::DesktopWindow(QWidget* parent) : QWidget(parent) {
     iconList_->setResizeMode(QListView::Adjust);
     iconList_->setMovement(QListView::Static);
     iconList_->setWordWrap(true);
+    // 图标文字/高亮主题化（深色白字、浅色深字 + 深色高亮，审查 t2）。
+    const QColor fg = w10de::theme::kTextPrimary();
+    const QColor hv = w10de::theme::kHoverBackground();
+    const QColor ps = w10de::theme::kPressedBackground();
     iconList_->setStyleSheet(QStringLiteral(
         "QListView {"
         "  background: transparent;"
         "  border: none;"
-        "  color: white;"
+        "  color: %1;"
         "  font-size: 11px;"
         "}"
         "QListView::item { background: transparent; padding: 2px; }"
-        "QListView::item:hover { background: rgba(255,255,255,0.12); }"
-        "QListView::item:selected { background: rgba(255,255,255,0.2); }"));
+        "QListView::item:hover { background: rgba(%2,%3,%4,0.12); }"
+        "QListView::item:selected { background: rgba(%5,%6,%7,0.2); }")
+        .arg(fg.name())
+        .arg(hv.red()).arg(hv.green()).arg(hv.blue())
+        .arg(ps.red()).arg(ps.green()).arg(ps.blue()));
     iconList_->setGeometry(0, 0, 300, 200);
 
     // 桌面目录图标（只读浏览）。

@@ -84,6 +84,17 @@ Compositor::~Compositor() {
 bool Compositor::init() {
     wlr_log_init(options_.verbose ? WLR_DEBUG : WLR_INFO, nullptr);
 
+    // 主题：从配置 [theme] 段加载（mode 预设 + 颜色键覆盖）。
+    // 无配置（configPath 空）时显式回退深色预设，避免 theme_ 保持默认
+    // 构造的全黑（黑底黑字）——审查 t1/t3。
+    if (!options_.configPath.empty()) {
+        theme_ = loadTheme(Config::load(options_.configPath));
+        wlr_log(WLR_INFO, "theme mode '%s' loaded (config '%s')",
+                theme_.mode.c_str(), options_.configPath.c_str());
+    } else {
+        theme_ = darkTheme();
+    }
+
     // 启动工作区（M7 续；View 构造时读取 currentWorkspace_ 作为归属）。
     currentWorkspace_ = options_.initialWorkspace;
     if (currentWorkspace_ < 0) currentWorkspace_ = 0;

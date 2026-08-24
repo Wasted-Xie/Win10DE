@@ -9,3 +9,28 @@ height = 1080
 # [wallpaper]：桌面壁纸图片路径（w10shell 读取；缺省用内置渐变）
 [wallpaper]
 # path = /usr/share/backgrounds/w10de-default.png
+
+# [theme]：主题（compositor 与 w10shell 读取同一配置）
+# mode = dark   深色（默认，Win10 深色任务栏/标题栏）
+# mode = light  浅色（Win10 浅色任务栏/标题栏 + 深色文字）
+# 颜色键可任意覆盖（自定义主题通道），格式 #RRGGBB；未填的键取预设值，
+# 非法值（非 #RRGGBB）被忽略并回退预设。
+[theme]
+# mode = dark
+# 常用键示例（深色下的默认值）：
+# taskbar_bg    = #2D2D2D    # 任务栏背景
+# menu_bg       = #1E1E1E    # 开始菜单背景
+# menu_sidebar  = #171717    # 开始菜单左侧栏（比主区略深）
+# titlebar_bg   = #2D2D2D    # 窗口标题栏背景
+# button_bg     = #3C3C3C    # 窗口按钮背景（最小化/最大化）
+# button_hover  = #5C5C5C    # 窗口按钮 hover
+# close_bg      = #E81123    # 关闭按钮
+# close_hover   = #F1707A    # 关闭按钮 hover
+# text_primary  = #FFFFFF    # 主文字
+# text_secondary= #C0C0C0    # 次级文字（时钟等）
+# hover_bg      = #3C3C3C    # UI 悬停背景（开始菜单/任务栏项）
+# pressed_bg    = #464646    # UI 按下背景
+# accent        = #0078D7    # 强调色（Win10 蓝）
+# accent_text   = #FFFFFF    # 强调底上的文字色（任务栏激活高亮）
+# desktop_bg    = #0078D7    # 桌面背景（无壁纸时的底色）
+

@@ -23,3 +23,6 @@ cmake-build-*/
 # 系统
 .DS_Store
 Thumbs.db
+
+# AgentTeams 运行时状态（团队/任务/信箱，不入库）
+.agent-teams/

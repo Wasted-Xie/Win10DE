@@ -35,6 +35,7 @@
 | M7 | 会话集成：`w10-session` 启动器（固定 socket + 退出联动 + autostart）、compositor `--socket`、锁屏触发（Win+L / D-Bus `org.w10de.Shell.Lock()`）、配置系统（`src/ipc/config.{h,cpp}`）、**XWayland**（`wlr_xwayland` lazy + XView：map/unmap/激活/关闭/最大化/最小化/configure、scene/seat 集成、DISPLAY 注入） | ✅ 完成 |
 | M7 续 | **多工作区**（`View/XView::workspace_` 归属、`switchWorkspace`/`moveViewToWorkspace`、统一 `applyVisibility`、命中过滤）+ **XWayland SSD 装饰与任务栏集成**（XView 同款标题栏/按钮/文字/阴影 + foreign-toplevel handle + 拖动交互 + override-redirect 处理 + set_class→app_id） | ✅ 完成（多工作区 4 场景 headless 验证；XWayland 因 WSL 无 X11 仅静态审查+编译） |
 | M8 | 视觉打磨：窗口阴影（自绘 ARGB 渐变 buffer）、Aero Snap（Win+←/→ 半屏 / ↑ 最大化 / ↓ 还原 + 平滑动画）、窗口移动动画；圆角遵循 Win10 直角设计（UI 元素 Qt 侧 2px 圆角） | ✅ 完成（阴影/Snap headless 验证通过） |
+| 主题 | **主题功能 + 浅色模式 + 自定义通道**：`src/ipc/theme.{h,cpp}`（共享主题定义）—`[theme]` 段 `mode=dark/light` 预设 + 14 颜色键覆盖；compositor（标题栏/按钮/文字/背景）与 w10shell（任务栏/开始菜单/时钟）读同一配置 | ✅ 完成（深色回归/浅色/自定义三态验证通过） |
 
 **验证状态**：多轮子代理静态审查全部完成（前 3 轮共 92 问题全部修复或标注；M2b/M7续/M8 又 3 轮审查并修复，见 README「M2b / M7 续 / M8 开发与验证」节）。**2026-08 完成真实编译 + headless 冒烟 + 完整渲染验证**（WSL2 Arch：vendored wlroots 0.19 源码编译 + 各二进制构建成功；`--frames 5` 截图像素校验通过；compositor+w10shell 同跑验证桌面壁纸渐变 + 任务栏渲染成功）。**M2b/M7续/M8 专项验证**（2026-08）：标题栏白字/关闭钮像素、多工作区 4 场景、窄窗口文字清空、窗口阴影、Aero Snap 贴边全部 headless 截图/像素验证通过。XWayland 运行时验证待真机（WSL 无 X11）。
 
@@ -145,6 +146,8 @@ w10shell（Qt 6 Widgets，layer-shell 客户端）
 | **M8 Aero Snap**：Win+←/→ 半屏（保存 restore 几何、可还原）、Win+↑ 最大化、Win+↓ 还原；最大化与贴边互斥（进入一方先退出另一方） | Win10 Snap 语义；restore 几何复用最大化机制 |
 | **M8 动画：帧插值 ease-out**（每帧 +0.12，`tickAnimations` 由输出帧循环驱动；拖动开始 `cancelAnimation`） | Snap/还原平滑移动；与用户操作无竞态（拖动即取消）；headless 用 `--snap-test` 验证最终位置 |
 | **M8 审查修复**：snap→最大化保留 restore 几何 + 取消动画（不调 unsnap，防返回动画拉回/恢复点被半屏值覆盖）；maximized→snap 先拷出恢复目标再落回（resize 异步竞态）；XView OR 切换全量置 null 装饰节点（shadowNode_ 悬垂 UAF）；beginResize 补 cancelAnimation；快捷键纯 LOGO 组合；多输出动画仅第一输出推进；unmap/dissociate 取消动画 | 子代理审查 S1/S2 严重 + M1/M2 中等 + 12 轻微，全部修复后回归通过 |
+| **主题系统**：`src/ipc/theme.{h,cpp}`（纯 C++ 共享定义：Theme 结构 + 深/浅预设 + `loadTheme(Config)` + `parseColor`）；compositor（`theme()` 访问器：标题栏/按钮/hover/标题文字/桌面背景/截图校验期望色）与 w10shell（`theme::loadFromConfig` + `colors.cpp` 全局主题，colors.h 常量改为访问器函数）读同一 `~/.config/w10de/config.ini` 的 `[theme]` 段 | mode=dark（默认，值不变）/light（浅灰任务栏标题栏 + 深字）/自定义键覆盖三态共用一套机制，双进程视觉一致；**自定义通道 = `[theme]` 段任意 `#RRGGBB` 键覆盖预设**（15 键含 menu_sidebar/accent_text，见 `w10de.conf.example`） |
+| **主题审查修复**（AgentTeams t1-t3：compositor 核心/shell 接入/交叉一致性）：空配置回退深色预设；shell 加 `--config` 对齐 compositor（主题/壁纸路径不分叉）；新增 `accent_text` 键（激活高亮固定白字）；桌面图标区主题化；浅色菜单 #F0F0F0 与磁贴可辨 | 5 中等 + 若干轻微修复后四组验证（深色/浅色/自定义/完整渲染）全部 PASS |
 
 ---
 
@@ -186,13 +189,17 @@ src/compositor/
   layer_shell.{h,cpp}               # LayerSurface：层表面管理/命中
   titletext.{h,cpp}                 # M2b：cairo/pango 标题文字 → 自实现 wlr_buffer
   shadow.{h,cpp}                    # M8：窗口阴影渐变 buffer（自绘）
-  util.h                            # W10DE_CONTAINER_OF 宏（C++ 版 container_of）
+  util.h                            # W10DE_CONTAINER_OF 宏 + themeColorToFloat
   main.cpp                          # 参数解析（--width/--frames/--workspace/--switch-ws/--snap-test 等）
   CMakeLists.txt                    # WLR_USE_UNSTABLE、PkgConfig::WLROOTS/DRM/XKBCOMMON/WAYLAND_SERVER/CAIRO/PANGO
 
+src/ipc/
+  config.{h,cpp}                    # 无依赖 INI 解析器（compositor/shell 共用）
+  theme.{h,cpp}                     # 主题定义（Theme 结构/深浅预设/loadTheme/parseColor，纯 C++）
+
 src/shell/
-  main.cpp                          # 入口：layer-shell 配置（桌面/任务栏/开始菜单）+ --wallpaper
-  theme/colors.h                    # Win10 颜色常量
+  main.cpp                          # 入口：layer-shell 配置（桌面/任务栏/开始菜单）+ --wallpaper + 主题加载
+  theme/colors.{h,cpp}              # 主题色访问器（从 [theme] 段加载的全局主题取色）
   desktop/desktopwindow.{h,cpp}     # 桌面：壁纸（内置渐变/指定图片）+ 图标列表（M4）
   taskbar/taskbarwindow.{h,cpp}     # 任务栏主窗口 + 窗口列表管理
   taskbar/startbutton.{h,cpp}       # 开始按钮
@@ -220,6 +227,7 @@ src/session/
 
 src/ipc/
   config.{h,cpp}                    # 无依赖 INI 解析器（compositor/shell 共用，M7 配置系统）
+  theme.{h,cpp}                     # 主题定义（Theme 结构/深浅预设/loadTheme/parseColor，纯 C++）
 
 third_party/
   wlroots/                          # wlroots 0.19.0 完整源码（API 参考，勿改）
@@ -242,6 +250,10 @@ third_party/
 - ✅ M2b 标题栏文字/按钮（2026-08：白字 385 像素 + 关闭钮红 1472 像素）、窄窗口清空。
 - ✅ M7 续 多工作区 4 场景（默认可见/他区隐藏/切走隐藏/切回可见）。
 - ✅ M8 阴影（阴影带变暗、内容区无污染）与 Aero Snap（贴左半屏 960×1048 at 0,0）。
+- ✅ 主题三态（2026-08）：深色默认回归（白字 385/红钮 1472/任务栏 #2D2D2D）、浅色
+  （任务栏/标题栏 #F3F3F3 + 深色文字 202 像素 + 无纯白残留）、自定义键覆盖
+  （taskbar_bg=#123456、titlebar_bg=#654321 双进程生效）。锁屏 w10lock 未主题化
+  （保持深色时钟，MVP 合理）。
 - ⬜ 嵌套验证（wayland backend + WSLg/weston）：开窗口、拖动、标题栏按钮、任务栏窗口列表、开始菜单交互、电源菜单 systemctl 实测（WSL 可测，勿真关机）。
 - ⬜ XWayland：WSL 中 `/tmp/.X11-unix` 为只读挂载导致 wlr_xwayland 创建失败（已降级为警告）；**XView 装饰/拖动/override-redirect/set_class 未运行时验证**，真机验证 X11 客户端。
 - ⬜ DRM 真机：headless 之外的后端需真机/KVM。
@@ -280,11 +292,11 @@ WLR_BACKEND=wayland ./build/src/compositor/w10compositor --frames 0
 
 ## 9. 下一步计划（按优先级）
 
-1. **M8 审查收尾**：等待/处理 M8 子代理审查结果（阴影边界、动画竞态、snap 状态机）。
-2. **真机/嵌套验证**（需用户环境）：DRM 后端、XWayland 运行时（XView 装饰/拖动/override-redirect）、嵌套 wayland 后端（窗口/任务栏/开始菜单交互）、锁屏画面与任意键解锁。
-3. **交互打磨**（可选）：拖拽到屏幕边缘触发 Snap、XView 拖动 configure 节流、xdg/XView 统一命中 z 序（审查 #3/#9）。
+1. **真机/嵌套验证**（需用户环境）：DRM 后端、XWayland 运行时（XView 装饰/拖动/override-redirect）、嵌套 wayland 后端（窗口/任务栏/开始菜单交互）、锁屏画面与任意键解锁。
+2. **交互打磨**（可选）：拖拽到屏幕边缘触发 Snap、XView 拖动 configure 节流、xdg/XView 统一命中 z 序（审查 #3/#9）。
+3. **主题扩展**（可选）：运行时热切换（当前改配置需重启会话）、桌面图标 hover 色浅色化、锁屏主题化。
 4. **锁屏密码验证**（PAM）与电源菜单真实动作确认。
-5. **提交/推送**：当前 M2b/M7续/M8 改动均在本地（提交 `962f014` 之后），需用户授权后 commit + push。
+5. **提交/推送**：当前主题改动在本地（提交 `953f482` 之后），需用户授权后 commit + push。
 
 ---
 

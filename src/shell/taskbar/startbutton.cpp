@@ -65,9 +65,9 @@ StartButton::StartButton(QWidget* parent) : QPushButton(parent) {
         "}"
         "QPushButton:hover { background: %2; }"
         "QPushButton:pressed { background: %3; }")
-        .arg(theme::kTextPrimary.name(),
-             theme::kHoverBackground.name(),
-             theme::kPressedBackground.name()));
+        .arg(theme::kTextPrimary().name(),
+             theme::kHoverBackground().name(),
+             theme::kPressedBackground().name()));
     connect(this, &QPushButton::clicked, this, &StartButton::startMenuRequested);
 }
 

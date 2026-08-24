@@ -65,10 +65,24 @@ int main(int argc, char* argv[]) {
                                        QStringLiteral("壁纸图片路径（缺省用内置渐变）"),
                                        QStringLiteral("path"));
     parser.addOption(wallpaperOption);
+    // --config：与 compositor 同款参数，保证自定义路径时两进程读取同一
+    // 配置（主题/壁纸不因路径分叉）——审查 t2/t3。缺省 ~/.config/w10de/config.ini。
+    QCommandLineOption configOption(QStringLiteral("config"),
+                                    QStringLiteral("配置文件路径（缺省 ~/.config/w10de/config.ini）"),
+                                    QStringLiteral("path"));
+    parser.addOption(configOption);
     parser.process(app);
 
     // 启用 layer-shell 支持（必须在使用任何 layer-shell 窗口前调用）。
     LayerShellQt::Shell::useLayerShell();
+
+    // ---- 主题（[theme] 段：mode=dark/light 预设 + 颜色键覆盖）----
+    // 与 compositor 读取同一配置，视觉一致；未配置时为深色预设。
+    QString configPath = parser.value(configOption);
+    if (configPath.isEmpty()) {
+        configPath = QDir::homePath() + QStringLiteral("/.config/w10de/config.ini");
+    }
+    w10de::theme::loadFromConfig(configPath.toStdString());
 
     // ---- 桌面（background 层，全屏；不接收键盘输入）----
     w10de::DesktopWindow desktop;
@@ -81,13 +95,10 @@ int main(int argc, char* argv[]) {
                                  LayerShellQt::Window::AnchorBottom),
                          0, QMargins(),
                          LayerShellQt::Window::KeyboardInteractivityNone);
-    // 壁纸：--wallpaper 优先，否则读配置 ~/.config/w10de/config.ini 的
-    // [wallpaper] path；都没有则用内置渐变。
+    // 壁纸：--wallpaper 优先，否则读配置 [wallpaper] path；都没有则用内置渐变。
     QString wallpaper = parser.value(wallpaperOption);
     if (wallpaper.isEmpty()) {
-        const w10de::Config config = w10de::Config::load(
-            (QDir::homePath() + QStringLiteral("/.config/w10de/config.ini"))
-                .toStdString());
+        const w10de::Config config = w10de::Config::load(configPath.toStdString());
         wallpaper = QString::fromStdString(config.get("wallpaper", "path"));
     }
     desktop.setWallpaper(wallpaper);

@@ -50,7 +50,7 @@ QString sanitizeExec(const QString& exec) {
 StartMenu::StartMenu(QWidget* parent) : QWidget(parent) {
     setMinimumSize(kSidebarWidth + kAppListWidth + kTilesWidth, 600);
     setStyleSheet(QStringLiteral("QWidget { background: %1; }")
-                      .arg(theme::kStartMenuBackground.name()));
+                      .arg(theme::kStartMenuBackground().name()));
 
     auto* root = new QHBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
@@ -60,7 +60,8 @@ StartMenu::StartMenu(QWidget* parent) : QWidget(parent) {
     sidebar_ = new QWidget(this);
     sidebar_->setFixedWidth(kSidebarWidth);
     sidebar_->setStyleSheet(QStringLiteral(
-        "QWidget { background: #171717; }"));  // 比主区略深（Win10 左侧栏）
+        "QWidget { background: %1; }")  // 主题化（深色略深 / 浅色浅灰）
+        .arg(w10de::theme::kMenuSidebar().name()));
     auto* sb = new QVBoxLayout(sidebar_);
     sb->setContentsMargins(0, 0, 0, 0);
     sb->setSpacing(0);
@@ -143,9 +144,9 @@ StartMenu::StartMenu(QWidget* parent) : QWidget(parent) {
         "QListWidget::item { padding: 6px 8px; }"
         "QListWidget::item:hover { background: %2; }"
         "QListWidget::item:selected { background: %3; }")
-        .arg(theme::kTextPrimary.name(),
-             theme::kHoverBackground.name(),
-             theme::kPressedBackground.name()));
+        .arg(theme::kTextPrimary().name(),
+             theme::kHoverBackground().name(),
+             theme::kPressedBackground().name()));
     ll->addWidget(appList_, 1);
     root->addWidget(listHost);
 
@@ -160,7 +161,7 @@ StartMenu::StartMenu(QWidget* parent) : QWidget(parent) {
     auto* scrollTitle = new QLabel(QStringLiteral("磁贴"), tileHost);
     scrollTitle->setStyleSheet(QStringLiteral(
         "QLabel { color: %1; font-size: 13px; font-weight: bold; }")
-        .arg(theme::kTextSecondary.name()));
+        .arg(theme::kTextSecondary().name()));
     tl->addWidget(scrollTitle);
 
     // 磁贴流直接挂在 288px 固定宽宿主上（不用 QScrollArea：其 viewport 初始
@@ -203,9 +204,9 @@ QToolButton* StartMenu::makeSideButton(const QString& iconName,
         "}"
         "QToolButton:hover { background: %2; }"
         "QToolButton:pressed { background: %3; }")
-        .arg(theme::kTextPrimary.name(),
-             theme::kHoverBackground.name(),
-             theme::kPressedBackground.name()));
+        .arg(theme::kTextPrimary().name(),
+             theme::kHoverBackground().name(),
+             theme::kPressedBackground().name()));
     sideButtons_.append(btn);
     return btn;
 }
@@ -248,10 +249,10 @@ void StartMenu::showPowerMenu() {
         "QMenu { background: %1; color: %2; border: 1px solid %3; }"
         "QMenu::item { padding: 6px 16px; }"
         "QMenu::item:selected { background: %4; }")
-        .arg(theme::kStartMenuBackground.name(),
-             theme::kTextPrimary.name(),
-             theme::kHoverBackground.name(),
-             theme::kPressedBackground.name()));
+        .arg(theme::kStartMenuBackground().name(),
+             theme::kTextPrimary().name(),
+             theme::kHoverBackground().name(),
+             theme::kPressedBackground().name()));
     QAction* shutdown = menu.addAction(QStringLiteral("关机"));
     QAction* reboot = menu.addAction(QStringLiteral("重启"));
     QAction* sleep = menu.addAction(QStringLiteral("睡眠"));

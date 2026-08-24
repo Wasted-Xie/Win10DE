@@ -25,6 +25,9 @@ extern "C" {
 }  // extern "C" (wlroots)
 }
 
+#include "ipc/config.h"
+#include "ipc/theme.h"
+
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -80,6 +83,8 @@ public:
     wlr_output_layout* outputLayout() const { return outputLayout_; }
     Seat* seat() const { return seat_.get(); }
     const CompositorOptions& options() const { return options_; }
+    // 当前主题（init 时从配置 [theme] 段加载；窗口装饰/背景色用）。
+    const Theme& theme() const { return theme_; }
 
     // ---- 视图列表管理（z 序：末尾为最上层）----
     const std::vector<View*>& views() const { return views_; }
@@ -177,6 +182,8 @@ private:
     static void handleXWaylandReady(wl_listener* listener, void* data);
 
     CompositorOptions options_;
+    // 主题（[theme] 段；init 时从 configPath 加载，未配置为深色预设）。
+    Theme theme_;
     wl_display* display_ = nullptr;
     wlr_backend* backend_ = nullptr;
     wlr_renderer* renderer_ = nullptr;
