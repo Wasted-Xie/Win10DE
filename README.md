@@ -61,6 +61,14 @@ Linux 上的 Windows 10 风格桌面环境，从零实现。
 - [x] M8 视觉打磨：窗口阴影（自绘渐变）、Aero Snap（Win+←/→/↑/↓ + 平滑动画）、窗口移动动画；圆角遵循 Win10 直角设计（UI 元素 Qt 侧 2px 圆角）（2026-08 验证通过）
 - [x] **主题功能**：`[theme]` 配置段（compositor 与 w10shell 共用）——`mode=dark/light` 预设
       + 任意颜色键覆盖（自定义主题通道）；深色/浅色/自定义三态 headless 验证通过（2026-08）
+- [x] **系统应用框架**（docs/SYSTEMAPPS.md）：独立二进制 + D-Bus 单实例激活通用接口
+      （`org.w10de.Apps.<Name>` / Activate(s path)，`src/systemapps/appipc.{h,cpp}`，后续
+      系统应用复用）+ **w10explorer 文件资源管理器**（文件操作对标 Windows：导航树/地址栏/
+      前进后退/复制/剪切/粘贴/冲突命名/删除进回收站/重命名/新建文件夹/属性/快捷键/右键菜单/
+      状态栏；`--selftest` 8 项自测 + headless 渲染 + 单实例 D-Bus 激活验证通过，2026-08）
+- [x] **w10settings 设置中心**（参考 KDE System Settings：顶部搜索 + 左侧分类 + 右侧模块）：
+      外观（主题深浅色/壁纸路径，写 config.ini）、系统（关于/开机自启开关）；Config 扩展
+      写入（保留注释与顺序）；`--selftest` 配置读写 + headless 渲染 + 单实例验证通过（2026-08）
 - [x] 编译与冒烟验证（headless 运行 + 截图 + 像素校验，2026-08 Arch/WSL2 通过）
 - [x] 完整渲染验证（compositor + w10shell 同跑：桌面壁纸渐变 + 任务栏渲染成功，2026-08）
 - [ ] 真机/嵌套环境验证（DRM、XWayland 运行时、鼠标键盘实际交互）
@@ -110,6 +118,57 @@ cmake --build build
 
 策略选项：`-DW10DE_WLROOTS_STRATEGY=auto`（默认）/ `system` / `vendored`。
 vendored 编译需要 `meson` + `ninja` + wlroots 构建依赖。
+
+### 从源码编译（无视发行版环境，`cmake/DepSource.cmake` + `DepsCompat.cmake`）
+
+wlroots 生态的**全部库依赖**（wayland / wayland-protocols / libdrm / pixman /
+libxkbcommon / libdisplay-info / libliftoff / libseat / libevdev / libinput /
+hwdata / mesa(egl+glesv2+gbm，GL 用) / cairo / pango）实现 **系统优先、缺失或
+版本不符时自动从固定版本源码编译** 的兜底机制：
+
+- 每个依赖先 `pkg-config` 探测系统（版本须 ≥ 要求值），满足 → 直接用系统包；
+- 不满足 → 从固定版本 tarball URL 下载 → `meson` 编译安装到
+  `build/_deps/prefix` → 注入 `PKG_CONFIG_PATH`（后续依赖与项目均可见）；
+- 增量：已构建依赖写 stamp，重复配置不重编；下载缓存于 `build/_deps/downloads`。
+
+策略开关：
+
+| 选项 | 语义 |
+|---|---|
+| `-DW10DE_DEP_SOURCE=auto`（默认） | 缺啥编啥（系统满足走系统） |
+| `-DW10DE_DEP_SOURCE=always` | 全部依赖从源码编译（无视系统包） |
+| `-DW10DE_DEP_SOURCE=never` | 缺则报错（不自动编译） |
+| `-DW10DE_FORCE_SOURCE_DEPS=a;b;c` | auto 下强制指定依赖走源码（验证用） |
+| `-DW10DE_DOWNLOAD_SELECT=fastest`（默认） | 下载前逐源测延迟，选最优源 |
+| `-DW10DE_DOWNLOAD_SELECT=ordered` | 按 URL 列表顺序尝试 |
+| `-DW10DE_DOWNLOAD_PROBE_MS=4000` | 源探测超时（毫秒） |
+
+下载源（每个依赖的 URL 为分号分隔的多源列表，逐源尝试 + 延迟排序）：
+
+- **gitlab.freedesktop.org** 官方（release/archive 两种，均已实测；原独立域名
+  dri/cairographics/xkbcommon/mesa/download.gnome.org 在部分网络不可达，已全部
+  改为 gitlab archive，tag 名带项目前缀如 `libdrm-2.4.123`/`pixman-0.43.4`）；
+- **GitHub 官方 mirror 仓库**（[gitlab-freedesktop-mirrors](https://github.com/gitlab-freedesktop-mirrors)
+  的 wayland/wayland-protocols、[mirror/mesa](https://github.com/mirror/mesa)、
+  [GNOME/pango](https://github.com/GNOME/pango)）+ **gh-proxy.com 加速前缀**
+  （国内可直连，已实测）——为 wayland/wayland-protocols/mesa/pango/hwdata 配置；
+- **国内无 fdo release 专用镜像站**（TUNA/USTC/阿里实测均无）；
+- **离线构建**：把 tarball 预置到 `build/_deps/downloads/` 即跳过下载。
+
+下载健壮性：源探测用 `--range 0-0` 实测（gitlab 对不存在 ref 返回 200+HTML，
+探测与下载后均做**压缩包魔数校验**（gzip/xz/bz2/tar/zip），HTML 错误页自动
+拒绝并切换下一源。
+
+说明：
+- 源码编译需要 `meson` + `ninja` + `curl`（下载；CMake 内置 TLS 在部分环境
+  证书校验失败，已实测 WSL/Arch 报 SSL connect error，故优先系统 curl）；
+- `libudev`（libinput/mesa 的 udev 依赖）假定系统提供（主流发行版必有）；
+- wlroots 的 renderers/backends/allocators 默认 auto：GL（egl/glesv2/gbm）或
+  libseat 缺失时**自动降级**（pixman 渲染 + shm 分配器），headless 无 GL 也可用；
+  DRM 真机需要 GL 时系统装 mesa 或 `-DW10DE_DEP_SOURCE=always` 编译 mesa
+  （最小集：swrast、无 LLVM，约 20-40 分钟）；
+- Qt6/layer-shell-qt 从源码编译（superbuild 扩展）为后续工作项；缺失时可用
+  `-DW10DE_BUILD_SHELL=OFF` 仅构建 compositor。
 
 ### 各发行版依赖安装
 

@@ -36,6 +36,7 @@
 | M7 续 | **多工作区**（`View/XView::workspace_` 归属、`switchWorkspace`/`moveViewToWorkspace`、统一 `applyVisibility`、命中过滤）+ **XWayland SSD 装饰与任务栏集成**（XView 同款标题栏/按钮/文字/阴影 + foreign-toplevel handle + 拖动交互 + override-redirect 处理 + set_class→app_id） | ✅ 完成（多工作区 4 场景 headless 验证；XWayland 因 WSL 无 X11 仅静态审查+编译） |
 | M8 | 视觉打磨：窗口阴影（自绘 ARGB 渐变 buffer）、Aero Snap（Win+←/→ 半屏 / ↑ 最大化 / ↓ 还原 + 平滑动画）、窗口移动动画；圆角遵循 Win10 直角设计（UI 元素 Qt 侧 2px 圆角） | ✅ 完成（阴影/Snap headless 验证通过） |
 | 主题 | **主题功能 + 浅色模式 + 自定义通道**：`src/ipc/theme.{h,cpp}`（共享主题定义）—`[theme]` 段 `mode=dark/light` 预设 + 14 颜色键覆盖；compositor（标题栏/按钮/文字/背景）与 w10shell（任务栏/开始菜单/时钟）读同一配置 | ✅ 完成（深色回归/浅色/自定义三态验证通过） |
+| 系统应用 | **通用接口框架**（`docs/SYSTEMAPPS.md`：独立二进制 + D-Bus 单实例激活 `org.w10de.Apps.<Name>`/Activate(s path)，`src/systemapps/appipc.{h,cpp}` 供后续应用复用）+ **w10explorer 文件资源管理器**（文件操作对标 Windows）+ **w10settings 设置中心**（KDE 风格，主题/壁纸/关于/开机自启） | ✅ 完成（explorer selftest 8 项 + settings 配置读写 selftest + 双应用 headless 渲染 + 单实例 D-Bus 激活验证通过） |
 
 **验证状态**：多轮子代理静态审查全部完成（前 3 轮共 92 问题全部修复或标注；M2b/M7续/M8 又 3 轮审查并修复，见 README「M2b / M7 续 / M8 开发与验证」节）。**2026-08 完成真实编译 + headless 冒烟 + 完整渲染验证**（WSL2 Arch：vendored wlroots 0.19 源码编译 + 各二进制构建成功；`--frames 5` 截图像素校验通过；compositor+w10shell 同跑验证桌面壁纸渐变 + 任务栏渲染成功）。**M2b/M7续/M8 专项验证**（2026-08）：标题栏白字/关闭钮像素、多工作区 4 场景、窄窗口文字清空、窗口阴影、Aero Snap 贴边全部 headless 截图/像素验证通过。XWayland 运行时验证待真机（WSL 无 X11）。
 
@@ -148,6 +149,7 @@ w10shell（Qt 6 Widgets，layer-shell 客户端）
 | **M8 审查修复**：snap→最大化保留 restore 几何 + 取消动画（不调 unsnap，防返回动画拉回/恢复点被半屏值覆盖）；maximized→snap 先拷出恢复目标再落回（resize 异步竞态）；XView OR 切换全量置 null 装饰节点（shadowNode_ 悬垂 UAF）；beginResize 补 cancelAnimation；快捷键纯 LOGO 组合；多输出动画仅第一输出推进；unmap/dissociate 取消动画 | 子代理审查 S1/S2 严重 + M1/M2 中等 + 12 轻微，全部修复后回归通过 |
 | **主题系统**：`src/ipc/theme.{h,cpp}`（纯 C++ 共享定义：Theme 结构 + 深/浅预设 + `loadTheme(Config)` + `parseColor`）；compositor（`theme()` 访问器：标题栏/按钮/hover/标题文字/桌面背景/截图校验期望色）与 w10shell（`theme::loadFromConfig` + `colors.cpp` 全局主题，colors.h 常量改为访问器函数）读同一 `~/.config/w10de/config.ini` 的 `[theme]` 段 | mode=dark（默认，值不变）/light（浅灰任务栏标题栏 + 深字）/自定义键覆盖三态共用一套机制，双进程视觉一致；**自定义通道 = `[theme]` 段任意 `#RRGGBB` 键覆盖预设**（15 键含 menu_sidebar/accent_text，见 `w10de.conf.example`） |
 | **主题审查修复**（AgentTeams t1-t3：compositor 核心/shell 接入/交叉一致性）：空配置回退深色预设；shell 加 `--config` 对齐 compositor（主题/壁纸路径不分叉）；新增 `accent_text` 键（激活高亮固定白字）；桌面图标区主题化；浅色菜单 #F0F0F0 与磁贴可辨 | 5 中等 + 若干轻微修复后四组验证（深色/浅色/自定义/完整渲染）全部 PASS |
+| **依赖从源码编译（兼容性）**：`cmake/DepSource.cmake` 通用机制（系统 pkg-config 优先 → 缺失/版本不符时固定 URL 下载 + meson 编译到 `build/_deps/prefix` + PKG_CONFIG_PATH 注入 + stamp 增量 + 下载缓存）+ `cmake/DepsCompat.cmake` 依赖编排（wlroots 生态 15 项：wayland(-protocols)/libdrm/pixman/libxkbcommon/libdisplay-info/libliftoff/libseat/libevdev/libinput/hwdata/mesa/cairo/pango） | `W10DE_DEP_SOURCE=auto/always/never` + `W10DE_FORCE_SOURCE_DEPS` 验证（5 依赖 wayland-protocols/wayland/libdrm/pixman/libxkbcommon 全部源码构建成功并链接回归通过）；版本比较为 ≥（点分段数值）；下载优先系统 curl（CMake 内置 TLS 在 WSL 报 SSL connect error 实测）；**多源 + 延迟筛选 + 魔数校验**（URL 分号列表逐源测延迟 `--range 0-0` 选优；gitlab 对不存在 ref 返回 200+HTML，下载后校验 gzip/xz/bz2/tar/zip 魔数拒绝错误页）；原独立 release 域名（dri/cairographics/xkbcommon/mesa/gnome）在部分网络不可达，已统一改 gitlab archive（tag 带项目前缀）；GitHub 官方 mirror + gh-proxy 为 wayland/wayland-protocols/mesa/pango/hwdata 加镜像；**fdo 无国内镜像站**（TUNA/USTC/阿里实测）；libudev 假定系统；Qt6 源码编译留接口 |
 
 ---
 
@@ -174,6 +176,9 @@ CMakeLists.txt                      # 顶层：WlrootsCompat 集成、W10DE_BUIL
 cmake/WlrootsCompat.cmake           # wlroots 获取策略（系统/补丁注入/vendored 编译）
 cmake/WlrootsPatchHeaders.cmake     # 系统 wlroots 头 C++ 补丁副本生成
 cmake/WlrootsBuildVendored.cmake    # vendored wlroots 自动编译（meson+ninja）
+cmake/DepSource.cmake               # 通用依赖策略：系统优先，缺失/版本不符时
+                                    #   固定 URL 源码编译到 build/_deps/prefix
+cmake/DepsCompat.cmake              # wlroots 生态依赖编排（15 项，版本/URL/meson 参数）
 README.md                           # 状态、构建、冒烟验证、待验证项、依赖与许可证
 DEPENDENCIES-LICENSES.md             # 上游依赖许可证清单（合规核实，10 项基础清单）
 docs/ARCHITECTURE.md                # 架构设计文档（决策表/里程碑/风险）
@@ -229,6 +234,17 @@ src/ipc/
   config.{h,cpp}                    # 无依赖 INI 解析器（compositor/shell 共用，M7 配置系统）
   theme.{h,cpp}                     # 主题定义（Theme 结构/深浅预设/loadTheme/parseColor，纯 C++）
 
+src/systemapps/
+  appipc.{h,cpp}                    # 系统应用通用接口：D-Bus 单实例激活（org.w10de.Apps.*）
+  explorer/                         # w10explorer 文件资源管理器（系统应用示例）
+    main.cpp                        # 入口：单实例 + --selftest（文件操作 headless 自测）
+    explorerwindow.{h,cpp}          # 主窗口（导航/地址栏/文件区/右键菜单/快捷键/状态栏）
+    fileops.{h,cpp}                 # 文件操作（复制/剪切/粘贴/回收站/重命名/新建/大小）
+  settings/                         # w10settings 设置中心（KDE System Settings 风格）
+    main.cpp                        # 入口：单实例 + --selftest（配置读写 headless 自测）
+    settingswindow.{h,cpp}          # 主窗口（搜索/左侧分类/右侧模块：主题/壁纸/关于/开机自启）
+  CMakeLists.txt                    # systemapps_appipc 静态库 + 各应用 + .desktop 生成
+
 third_party/
   wlroots/                          # wlroots 0.19.0 完整源码（API 参考，勿改）
   stb/stb_image_write.h             # PNG 输出（compositor 截图用）
@@ -254,6 +270,13 @@ third_party/
   （任务栏/标题栏 #F3F3F3 + 深色文字 202 像素 + 无纯白残留）、自定义键覆盖
   （taskbar_bg=#123456、titlebar_bg=#654321 双进程生效）。锁屏 w10lock 未主题化
   （保持深色时钟，MVP 合理）。
+- 🔶 **依赖 from-source 机制**（2026-08）：auto 模式全系统走通（15 依赖零下载零
+  回归）；**强制源码验证完成**——wayland-protocols / wayland / libdrm / pixman /
+  libxkbcommon 五依赖从源码完整构建（下载→解包→meson→install→PKG_CONFIG_PATH
+  注入→项目链接→回归 PASS）；多源/延迟筛选/魔数校验实测有效（libxkbcommon 官方
+  源 xkbcommon.org 当前可达）。**WSL 网络对 gitlab.freedesktop.org 间歇性
+  connection reset**（当前环境经 Windows 主机 SOCKS 代理 172.21.192.1:10808
+  可达，已配 WSL 代理脚本模板）；`W10DE_FORCE_SOURCE_DEPS` 可在任意环境重跑验证。
 - ⬜ 嵌套验证（wayland backend + WSLg/weston）：开窗口、拖动、标题栏按钮、任务栏窗口列表、开始菜单交互、电源菜单 systemctl 实测（WSL 可测，勿真关机）。
 - ⬜ XWayland：WSL 中 `/tmp/.X11-unix` 为只读挂载导致 wlr_xwayland 创建失败（已降级为警告）；**XView 装饰/拖动/override-redirect/set_class 未运行时验证**，真机验证 X11 客户端。
 - ⬜ DRM 真机：headless 之外的后端需真机/KVM。
@@ -293,10 +316,10 @@ WLR_BACKEND=wayland ./build/src/compositor/w10compositor --frames 0
 ## 9. 下一步计划（按优先级）
 
 1. **真机/嵌套验证**（需用户环境）：DRM 后端、XWayland 运行时（XView 装饰/拖动/override-redirect）、嵌套 wayland 后端（窗口/任务栏/开始菜单交互）、锁屏画面与任意键解锁。
-2. **交互打磨**（可选）：拖拽到屏幕边缘触发 Snap、XView 拖动 configure 节流、xdg/XView 统一命中 z 序（审查 #3/#9）。
-3. **主题扩展**（可选）：运行时热切换（当前改配置需重启会话）、桌面图标 hover 色浅色化、锁屏主题化。
+2. **系统应用扩展**（可选）：w10explorer 补充（拖放细节/详情视图/回收站 UI/面包屑）；后续系统应用（记事本/设置/终端）按 SYSTEMAPPS.md 复用 appipc。
+3. **交互打磨**（可选）：拖拽到屏幕边缘触发 Snap、XView 拖动 configure 节流、xdg/XView 统一命中 z 序（审查 #3/#9）。
 4. **锁屏密码验证**（PAM）与电源菜单真实动作确认。
-5. **提交/推送**：当前主题改动在本地（提交 `953f482` 之后），需用户授权后 commit + push。
+5. **提交/推送**：当前主题/from-source/explorer 改动在本地（提交 `997457d` 之后），需用户授权后 commit + push。
 
 ---
 

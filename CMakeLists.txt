@@ -14,11 +14,17 @@ endif()
 
 # ---------------------------------------------------------------------------
 # 依赖（参考 docs/ARCHITECTURE.md 第 10 节）
+# 策略：系统优先，缺失/版本不符时从源码编译兜底（见 cmake/DepSource.cmake +
+# cmake/DepsCompat.cmake）——wlroots 生态全部库依赖（wayland/libdrm/pixman/
+# libxkbcommon/libinput/mesa 等）可在无系统包环境下从固定版本源码构建。
 # wlroots 0.19 获取策略（跨发行版）：系统包优先，头需 C++ 补丁时注入补丁
 # 副本，缺失/版本不符时自动编译 vendored 源码（见 cmake/WlrootsCompat.cmake）。
 # ---------------------------------------------------------------------------
+include(cmake/DepSource.cmake)
+include(cmake/DepsCompat.cmake)
 include(cmake/WlrootsCompat.cmake)
 # libdrm 的 pkg-config 名在发行版间不同：Debian 系为 drm，Arch 为 libdrm。
+# （DepsCompat 已确保 libdrm 可用——系统或源码编译；此处探测建立链接目标。）
 pkg_check_modules(DRM IMPORTED_TARGET drm)
 if(NOT DRM_FOUND)
     pkg_check_modules(DRM REQUIRED IMPORTED_TARGET libdrm)
@@ -39,6 +45,8 @@ add_subdirectory(src/compositor)
 if(W10DE_BUILD_SHELL)
     add_subdirectory(src/shell)
     add_subdirectory(src/lock)
+    # 系统应用（独立二进制 + 通用接口，见 docs/SYSTEMAPPS.md）。
+    add_subdirectory(src/systemapps)
 endif()
 # add_subdirectory(src/tray)     # 已并入 src/shell/tray/
 
