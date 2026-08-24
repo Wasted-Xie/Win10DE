@@ -42,6 +42,13 @@ struct CompositorOptions {
     std::string socketName;        // 固定 Wayland socket 名（会话启动用）；空则自动生成
     std::string configPath;        // 配置文件（~/.config/w10de/config.ini）；空则不读
     bool verbose = false;          // 详细日志
+    // ---- 多工作区（M7 续）----
+    int initialWorkspace = 0;      // 启动时的工作区（0..kWorkspaceCount-1）
+    // headless 验证用：在渲染到指定帧时切换工作区（frame, workspace），
+    // 按帧序应用；空则无自动切换。
+    std::vector<std::pair<int, int>> workspaceSwitches;
+    // M8 验证用：首个窗口 map 后自动贴左半屏（验证 Aero Snap 几何/动画）。
+    bool snapTest = false;
 };
 
 class Output;
@@ -79,6 +86,25 @@ public:
     void addView(View* view);
     void removeView(View* view);
     void raiseView(View* view);
+
+    // ---- 多工作区（M7 续）----
+    // 工作区数量（Win10 默认 4 个虚拟桌面）。
+    static constexpr int kWorkspaceCount = 4;
+    // 当前工作区（0..kWorkspaceCount-1）。
+    int currentWorkspace() const { return currentWorkspace_; }
+    // 切换工作区：更新全部 view/xview 可见性，焦点移到新工作区顶层窗口
+    //（原焦点窗口被隐藏时）；无变化（同工作区）时忽略。
+    void switchWorkspace(int workspace);
+    // 窗口移动到指定工作区（任务栏/快捷键用）；归属变化时刷新可见性。
+    void moveViewToWorkspace(View* view, int workspace);
+    void moveXViewToWorkspace(XView* view, int workspace);
+    // 当前工作区下窗口是否可见（View::applyVisibility 用）。
+    bool viewVisible(const View* view) const;
+    bool xviewVisible(const XView* view) const;
+    // 工作区切换后：聚焦指定工作区最上层可见窗口（切换目标工作区用）。
+    void focusWorkspaceTop(int workspace);
+    // M8：推进全部窗口动画一帧（Output 帧循环调用）。
+    void tickAnimations();
 
     // ---- XWayland 窗口列表（XView，与 xdg View 平级）----
     const std::vector<XView*>& xviews() const { return xviews_; }
@@ -184,6 +210,8 @@ private:
     std::vector<View*> views_;
     std::vector<XView*> xviews_;
     std::vector<LayerSurface*> layerSurfaces_;  // 所有权为自身（destroy 回调 delete this）
+    // 当前工作区（M7 续：多工作区；0..kWorkspaceCount-1）。
+    int currentWorkspace_ = 0;
     // 每输出可用区缓存（arrangeLayers 更新；窗口最大化避开任务栏等独占区）。
     std::unordered_map<wlr_output*, wlr_box> usableAreas_;
 

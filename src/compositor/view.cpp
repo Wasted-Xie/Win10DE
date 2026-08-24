@@ -70,6 +70,11 @@ View::View(Compositor& compositor, wlr_xdg_toplevel* toplevel)
     setAppId_.notify = handleSetAppId;
     wl_signal_add(&toplevel->events.set_app_id, &setAppId_);
 
+    // 新窗口归属当前工作区（M7 续：多工作区）。
+    workspace_ = compositor_.currentWorkspace();
+    // M8 验证：--snap-test 时 map 后自动贴左半屏。
+    snapOnMap_ = compositor_.options().snapTest;
+
     wlr_log(WLR_INFO, "new toplevel view created");
 }
 
@@ -81,6 +86,16 @@ View::~View() {
     // 装饰树需手动销毁，否则每窗口泄漏 5 个节点）。
     if (decorationTree_ != nullptr) {
         wlr_scene_node_destroy(&decorationTree_->node);
+    }
+    // 标题文字 buffer（scene buffer 已随装饰树销毁，这里释放像素）。
+    if (titleText_ != nullptr) {
+        wlr_buffer_drop(&titleText_->base);
+        titleText_ = nullptr;
+    }
+    // M8 阴影 buffer（scene buffer 已随装饰树销毁，这里释放像素）。
+    if (shadow_ != nullptr) {
+        wlr_buffer_drop(&shadow_->base);
+        shadow_ = nullptr;
     }
     wl_list_remove(&map_.link);
     wl_list_remove(&unmap_.link);
@@ -151,6 +166,13 @@ void View::close() {
 }
 
 void View::setMaximized(bool maximize) {
+    // M8 互斥：最大化时先退出贴边。注意不能用 unsnap()——它启动返回动画
+    // 且消费 restore 几何；这里只清贴边标志并取消动画，保留 snap 时保存的
+    // 浮动几何作为恢复点（审查 S1）。
+    if (maximize && snapEdge_ != SnapEdge::None) {
+        cancelAnimation();
+        snapEdge_ = SnapEdge::None;
+    }
     if (maximized_ == maximize) {
         // 协议要求：每次 request_maximize/fullscreen 都必须响应 configure，
         // 即使状态未变（wlr_xdg_toplevel_set_maximized 内部 schedule_configure）。
@@ -167,6 +189,11 @@ void View::setMaximized(bool maximize) {
     // 状态，几何由 handleMap 首次定位后应用；此时 geometry 还是 0，保存
     // 恢复几何会得到 (0,0,0,0)。
     if (!mapped_) {
+        if (!maximize && hasRestoreGeometry_) {
+            // 未映射时取消最大化：清理旧 restore 几何，避免下次最大化
+            // 时恢复错误位置（M2a 审查 #13）。
+            hasRestoreGeometry_ = false;
+        }
         wlr_log(WLR_INFO, "view maximized=%d (applied on map)", maximized_);
         return;
     }
@@ -208,6 +235,113 @@ void View::setRestoreGeometry(int x, int y, int w, int h) {
     hasRestoreGeometry_ = true;
 }
 
+// ---- M8 窗口动画（帧插值）----
+
+void View::animateMoveTo(int x, int y) {
+    if (!mapped_) {
+        // 未映射：直接定位（map 后 handleMap 会设置初始位置）。
+        moveTo(x, y);
+        return;
+    }
+    animFromX_ = x_;
+    animFromY_ = y_;
+    animToX_ = x;
+    animToY_ = y;
+    animT_ = 0.0f;
+    animActive_ = true;
+}
+
+void View::tickAnimation() {
+    if (!animActive_) {
+        return;
+    }
+    // 每帧推进；缓动（ease-out）使开始快、收尾慢。
+    constexpr float kStep = 0.12f;
+    animT_ += kStep;
+    if (animT_ >= 1.0f) {
+        animT_ = 1.0f;
+        moveTo(static_cast<int>(animToX_), static_cast<int>(animToY_));
+        animActive_ = false;
+        return;
+    }
+    // ease-out：1 - (1-t)^2。
+    const float eased = 1.0f - (1.0f - animT_) * (1.0f - animT_);
+    const int nx = static_cast<int>(animFromX_ + (animToX_ - animFromX_) * eased);
+    const int ny = static_cast<int>(animFromY_ + (animToY_ - animFromY_) * eased);
+    moveTo(nx, ny);
+}
+
+void View::cancelAnimation() {
+    animActive_ = false;
+}
+
+// ---- Aero Snap（M8：Win+←/→ 半屏）----
+
+void View::snapTo(SnapEdge edge) {
+    if (!mapped_ || edge == SnapEdge::None) {
+        return;
+    }
+    // 先取消最大化（避免与贴边布局态冲突）。setMaximized(false) 会把恢复
+    // 几何消费掉，且 resize 是异步请求（取消后 width()/height() 仍是最大化
+    // 尺寸）——先拷出恢复目标，取消后重新落回，保证 snap 的恢复点是真实
+    // 浮动几何而非半屏/最大化尺寸（审查 M2）。
+    int rx = 0, ry = 0, rw = 0, rh = 0;
+    bool hadRestore = false;
+    if (maximized_) {
+        if (hasRestoreGeometry_) {
+            restoreGeometry(&rx, &ry, &rw, &rh);
+            hadRestore = true;
+        }
+        setMaximized(false);
+        if (hadRestore) {
+            setRestoreGeometry(rx, ry, rw, rh);
+        }
+    }
+    // 保存当前浮动几何作为恢复点（若已贴边则覆盖为当前贴边几何：
+    // 与 Win10 一致，连续按 ←/→ 时从"当前半屏"切换方向）。
+    if (!hasRestoreGeometry_) {
+        setRestoreGeometry(x_, y_, width(), height());
+    }
+    snapEdge_ = edge;
+
+    int outW = 0, outH = 0;
+    if (!compositor_.outputUsableSize(compositor_.firstOutput(), &outW, &outH)) {
+        wlr_log(WLR_ERROR, "snap: no usable output size");
+        unsnap();
+        return;
+    }
+    // 半屏内容尺寸 = 可用区一半宽 × (可用高 - 标题栏)。
+    int contentH = outH - kTitleBarHeight;
+    if (contentH < 1) {
+        contentH = 1;
+    }
+    const int halfW = outW / 2;
+    const int newX = edge == SnapEdge::Left ? 0 : outW - halfW;
+    // M8 动画：平滑移动到目标（resize 仍即时请求，客户端 configure 异步）。
+    animateMoveTo(newX, 0);
+    resize(halfW, contentH);
+    wlr_log(WLR_INFO, "view snapped to %s (%dx%d at %d,0)",
+            edge == SnapEdge::Left ? "left" : "right",
+            halfW, contentH, newX);
+}
+
+void View::unsnap() {
+    if (snapEdge_ == SnapEdge::None) {
+        return;
+    }
+    snapEdge_ = SnapEdge::None;
+    // 恢复 snap 前几何（最大化状态下由 setMaximized(false) 处理）。
+    if (hasRestoreGeometry_) {
+        int rx = 0, ry = 0, rw = 0, rh = 0;
+        restoreGeometry(&rx, &ry, &rw, &rh);
+        // M8 动画：平滑回到原位置。
+        animateMoveTo(rx, ry);
+        resize(rw, rh);
+        hasRestoreGeometry_ = false;
+    }
+    wlr_log(WLR_INFO, "view unsnapped");
+}
+
 void View::restoreGeometry(int* x, int* y, int* w, int* h) const {
     *x = restoreX_;
     *y = restoreY_;
@@ -217,11 +351,8 @@ void View::restoreGeometry(int* x, int* y, int* w, int* h) const {
 
 void View::setMinimized(bool minimize) {
     minimized_ = minimize;
-    // 整个窗口（内容 + 装饰）一起隐藏/恢复。
-    if (decorationTree_ != nullptr) {
-        wlr_scene_node_set_enabled(&decorationTree_->node, !minimized_);
-    }
-    wlr_scene_node_set_enabled(&sceneTree_->node, !minimized_);
+    // 可见性 = mapped && !minimized && 当前工作区（M7 续统一入口）。
+    applyVisibility();
     if (minimized_) {
         setActivated(false);
     }
@@ -229,6 +360,31 @@ void View::setMinimized(bool minimize) {
         wlr_foreign_toplevel_handle_v1_set_minimized(ftHandle_, minimized_);
     }
     wlr_log(WLR_INFO, "view minimized=%d", minimized_);
+}
+
+// ---- 多工作区（M7 续）----
+
+void View::setWorkspace(int workspace) {
+    if (workspace < 0 || workspace >= Compositor::kWorkspaceCount) {
+        return;
+    }
+    if (workspace_ == workspace) {
+        return;
+    }
+    workspace_ = workspace;
+    applyVisibility();
+}
+
+void View::applyVisibility() {
+    // 可见 = 已映射 && 未最小化 && 属于当前工作区。
+    const bool visible = mapped_ && !minimized_ &&
+                         workspace_ == compositor_.currentWorkspace();
+    if (decorationTree_ != nullptr) {
+        wlr_scene_node_set_enabled(&decorationTree_->node, visible);
+    }
+    if (sceneTree_ != nullptr) {
+        wlr_scene_node_set_enabled(&sceneTree_->node, visible);
+    }
 }
 
 void View::moveTo(int x, int y) {
@@ -260,15 +416,28 @@ void View::createDecoration() {
     const float buttonColor[4] = {0x3C / 255.0f, 0x3C / 255.0f, 0x3C / 255.0f, 1.0f};
     const float closeColor[4] = {0xE8 / 255.0f, 0x11 / 255.0f, 0x23 / 255.0f, 1.0f};
 
+    // z 序（decorationTree_ 子节点，后创建者在上）：
+    //   1. 窗口阴影（最底，覆盖窗口外 8px）
+    //   2. 标题栏背景
+    //   3. 标题文字（背景之上，按钮之下）
+    //   4. 三个按钮（最顶，文字不会盖按钮）
+    // M8 阴影节点：位置固定 (-s, -s)（装饰树已在窗口坐标），尺寸随窗口。
+    shadowNode_ = wlr_scene_buffer_create(decorationTree_, nullptr);
+    if (shadowNode_ != nullptr) {
+        wlr_scene_node_set_position(&shadowNode_->node,
+                                    -kShadowSize, -kShadowSize);
+    } else {
+        wlr_log(WLR_ERROR, "failed to create shadow node");
+    }
     titleBarRect_ = wlr_scene_rect_create(decorationTree_, 0, kTitleBarHeight, titleBarColor);
+    // M2b 标题文字节点（buffer 可为空，renderTitle 时设置）。
+    titleTextNode_ = wlr_scene_buffer_create(decorationTree_, nullptr);
+    if (titleTextNode_ == nullptr) {
+        wlr_log(WLR_ERROR, "failed to create title text node");
+    }
     minButtonRect_ = wlr_scene_rect_create(decorationTree_, kButtonWidth, kTitleBarHeight, buttonColor);
     maxButtonRect_ = wlr_scene_rect_create(decorationTree_, kButtonWidth, kTitleBarHeight, buttonColor);
     closeButtonRect_ = wlr_scene_rect_create(decorationTree_, kButtonWidth, kTitleBarHeight, closeColor);
-    if (titleBarRect_ == nullptr || minButtonRect_ == nullptr ||
-            maxButtonRect_ == nullptr || closeButtonRect_ == nullptr) {
-        wlr_log(WLR_ERROR, "failed to create decoration rects");
-        return;
-    }
 
     // 未映射时隐藏。
     wlr_scene_node_set_enabled(&decorationTree_->node, false);
@@ -295,6 +464,100 @@ void View::updateDecoration() {
     }
     if (minButtonRect_ != nullptr) {
         wlr_scene_node_set_position(&minButtonRect_->node, minX, 0);
+    }
+    // M2b 标题文字：左侧 padding 12，宽到最小化按钮左缘。
+    // 文字区尺寸变化（含首次/缩到不可用）时重渲染；renderTitle 内部
+    // 处理空标题与窄窗口（清空旧 buffer），避免旧文字残留。
+    if (titleTextNode_ != nullptr) {
+        const int textW = w - 3 * kButtonWidth - 24;
+        wlr_scene_node_set_position(&titleTextNode_->node, 12, 0);
+        const int oldTextW = titleText_ != nullptr
+            ? titleText_->base.width : -1;
+        if (textW != oldTextW) {
+            renderTitle();
+        }
+    }
+}
+
+void View::renderTitle() {
+    if (titleTextNode_ == nullptr || decorationTree_ == nullptr) {
+        return;
+    }
+    const char* t = title();
+    // 标题文字区域：宽 = 标题栏 - 3 按钮 - 左右 padding。
+    const int textW = width() - 3 * kButtonWidth - 24;
+    // 空标题 / 文字区不可用（过窄）：清空 scene buffer 并释放旧引用，
+    // 防止旧文字残留（覆盖按钮或显示过期标题）。
+    TitleTextBuffer* next = nullptr;
+    if (textW > 0 && t != nullptr && *t != '\0') {
+        // 白字（Win10 标题栏文字）。
+        static const float kTextColor[3] = {1.0f, 1.0f, 1.0f};
+        next = renderTitleText(t, textW, kTitleBarHeight, kTextColor);
+    }
+    if (next == nullptr && titleText_ == nullptr) {
+        return;  // 无旧文字可清，跳过（避免每帧重复 set_buffer(NULL)）
+    }
+    // 替换旧 buffer（set_buffer 内部 lock 新引用、unlock 旧引用；
+    // 旧引用随后 drop 释放。传 NULL 时 scene 直接清空）。
+    wlr_scene_buffer_set_buffer(titleTextNode_,
+        next != nullptr ? &next->base : nullptr);
+    if (titleText_ != nullptr) {
+        wlr_buffer_drop(&titleText_->base);
+    }
+    titleText_ = next;
+    wlr_scene_node_set_position(&titleTextNode_->node, 12, 0);
+}
+
+// M8：渲染/更新窗口阴影（尺寸变化时重绘；位置固定跟随装饰树）。
+void View::updateShadow() {
+    if (decorationTree_ == nullptr || shadowNode_ == nullptr) {
+        return;
+    }
+    const int w = width();
+    const int h = height();
+    if (w <= 0 || h <= 0) {
+        return;
+    }
+    // 阴影覆盖整个窗口（标题栏 kTitleBarHeight + 内容区 h）。
+    const int shadowW = w + 2 * kShadowSize;
+    const int shadowH = kTitleBarHeight + h + 2 * kShadowSize;
+    if (shadow_ != nullptr && shadow_->base.width == shadowW &&
+            shadow_->base.height == shadowH) {
+        return;  // 尺寸未变（位置由装饰树移动携带），无需重绘
+    }
+    ShadowBuffer* next = renderShadow(w, kTitleBarHeight + h, kShadowSize);
+    if (next == nullptr) {
+        return;
+    }
+    wlr_scene_buffer_set_buffer(shadowNode_, &next->base);
+    if (shadow_ != nullptr) {
+        wlr_buffer_drop(&shadow_->base);
+    }
+    shadow_ = next;
+    wlr_scene_node_set_position(&shadowNode_->node, -kShadowSize, -kShadowSize);
+}
+
+void View::setHoverArea(DecorationArea area) {
+    if (hoverArea_ == area || decorationTree_ == nullptr) {
+        return;
+    }
+    hoverArea_ = area;
+    // hover 打磨：按钮背景高亮（关闭更亮红）。
+    const float defaultButton[4] = {0x3C / 255.0f, 0x3C / 255.0f, 0x3C / 255.0f, 1.0f};
+    const float hoverButton[4] = {0x5C / 255.0f, 0x5C / 255.0f, 0x5C / 255.0f, 1.0f};
+    const float defaultClose[4] = {0xE8 / 255.0f, 0x11 / 255.0f, 0x23 / 255.0f, 1.0f};
+    const float hoverClose[4] = {0xF1 / 255.0f, 0x70 / 255.0f, 0x7A / 255.0f, 1.0f};
+    if (minButtonRect_ != nullptr) {
+        wlr_scene_rect_set_color(minButtonRect_,
+            area == DecorationArea::MinButton ? hoverButton : defaultButton);
+    }
+    if (maxButtonRect_ != nullptr) {
+        wlr_scene_rect_set_color(maxButtonRect_,
+            area == DecorationArea::MaxButton ? hoverButton : defaultButton);
+    }
+    if (closeButtonRect_ != nullptr) {
+        wlr_scene_rect_set_color(closeButtonRect_,
+            area == DecorationArea::CloseButton ? hoverClose : defaultClose);
     }
 }
 
@@ -373,6 +636,12 @@ void View::handleFtlActivate(wl_listener* listener, void* /*data*/) {
     if (!view->mapped_) {
         return;
     }
+    // 审查 #6：窗口在别的桌面时先切换过去（Win10 任务栏语义）。
+    if (view->workspace() != view->compositor_.currentWorkspace()) {
+        wlr_log(WLR_INFO, "ftl activate: switching to workspace %d",
+                view->workspace());
+        view->compositor_.switchWorkspace(view->workspace());
+    }
     if (view->minimized_) {
         view->setMinimized(false);
     }
@@ -446,16 +715,27 @@ void View::handleMap(wl_listener* listener, void* /*data*/) {
             view->resize(outW, contentH);
         }
     }
-    // 显示装饰并同步尺寸。
-    if (view->decorationTree_ != nullptr) {
-        wlr_scene_node_set_enabled(&view->decorationTree_->node, true);
-    }
+    // 显示装饰并同步尺寸（可见性按 工作区+最小化 统一判定，M7 续）。
+    view->applyVisibility();
+    view->renderTitle();  // M2b：map 时渲染标题文字
+    view->updateShadow();  // M8：map 时渲染窗口阴影
     view->updateDecoration();
+    // 审查 #1：窗口在非当前工作区（remap 场景）时不得获取焦点/激活/置顶，
+    // 否则输入进入不可见窗口，破坏可见性不变量。
+    if (!view->compositor_.viewVisible(view)) {
+        wlr_log(WLR_INFO, "view mapped (hidden, workspace %d != current %d)",
+                view->workspace(), view->compositor_.currentWorkspace());
+        return;
+    }
     view->setActivated(true);
     view->compositor_.seat()->focusView(view);
     // 置顶：map 顺序可能与创建顺序不同，确保新窗口在 z 序最上
     //（与 views_ 列表"末尾最上"的语义一致）。
     view->compositor_.raiseView(view);
+    // M8 验证：--snap-test 自动贴左半屏（在焦点/置顶之后执行，几何可用）。
+    if (view->snapOnMap_) {
+        view->snapTo(SnapEdge::Left);
+    }
     wlr_log(WLR_INFO, "view mapped: '%s' (%s) %dx%d at %d,%d",
             view->title() ? view->title() : "",
             view->appId() ? view->appId() : "",
@@ -465,17 +745,27 @@ void View::handleMap(wl_listener* listener, void* /*data*/) {
 void View::handleUnmap(wl_listener* listener, void* /*data*/) {
     auto* view = W10DE_CONTAINER_OF(listener, View, unmap_);
     view->mapped_ = false;
-    if (view->decorationTree_ != nullptr) {
-        wlr_scene_node_set_enabled(&view->decorationTree_->node, false);
-    }
+    view->cancelAnimation();  // 隐藏后动画不应继续空转（审查轻微项）
+    view->applyVisibility();  // 统一显隐（工作区/最小化判定，M7 续）
     view->compositor_.removeView(view);
+    // unmap 后 hover 高亮残留：重算（viewAt 不命中已 unmap 窗口，自动清除）。
+    if (view->compositor_.seat() != nullptr) {
+        view->compositor_.seat()->updateHover();
+    }
     view->compositor_.seat()->unfocusView(view);
 }
 
 void View::handleCommit(wl_listener* listener, void* /*data*/) {
     auto* view = W10DE_CONTAINER_OF(listener, View, commit_);
+    // xdg-shell 协议要求：xdg_surface 首次 commit 后 compositor 必须回复
+    // configure，客户端才能 attach buffer 并 map。尺寸传 0 表示由客户端自定
+    // （tinywl 同款处理；缺失会导致客户端永远卡在等 configure）。
+    if (view->toplevel_->base->initial_commit) {
+        wlr_xdg_toplevel_set_size(view->toplevel_, 0, 0);
+    }
     if (view->mapped_) {
         view->updateDecoration();
+        view->updateShadow();  // M8：尺寸变化时重绘阴影
     }
 }
 
@@ -529,6 +819,8 @@ void View::handleSetTitle(wl_listener* listener, void* /*data*/) {
         wlr_foreign_toplevel_handle_v1_set_title(view->ftHandle_,
             view->title() != nullptr ? view->title() : "");
     }
+    // M2b：标题变化时刷新标题栏文字。
+    view->renderTitle();
 }
 
 void View::handleSetAppId(wl_listener* listener, void* /*data*/) {

@@ -84,6 +84,11 @@ Compositor::~Compositor() {
 bool Compositor::init() {
     wlr_log_init(options_.verbose ? WLR_DEBUG : WLR_INFO, nullptr);
 
+    // 启动工作区（M7 续；View 构造时读取 currentWorkspace_ 作为归属）。
+    currentWorkspace_ = options_.initialWorkspace;
+    if (currentWorkspace_ < 0) currentWorkspace_ = 0;
+    if (currentWorkspace_ >= kWorkspaceCount) currentWorkspace_ = kWorkspaceCount - 1;
+
     // listener 先初始化：init 中途失败走析构时 remove 安全。
     wl_list_init(&newOutputListener_.link);
     wl_list_init(&newInputListener_.link);
@@ -332,6 +337,124 @@ void Compositor::raiseView(View* view) {
     }
 }
 
+// ---- 多工作区（M7 续）----
+
+bool Compositor::viewVisible(const View* view) const {
+    return view->mapped() && !view->minimized() &&
+           view->workspace() == currentWorkspace_;
+}
+
+bool Compositor::xviewVisible(const XView* view) const {
+    return view->mapped() && !view->minimized() &&
+           view->workspace() == currentWorkspace_;
+}
+
+void Compositor::switchWorkspace(int workspace) {
+    if (workspace < 0 || workspace >= kWorkspaceCount ||
+            workspace == currentWorkspace_) {
+        return;
+    }
+    wlr_log(WLR_INFO, "switching to workspace %d", workspace);
+    currentWorkspace_ = workspace;
+    // 刷新全部窗口可见性（各自 applyVisibility 内部按工作区判断）。
+    for (View* view : views_) {
+        view->applyVisibility();
+    }
+    for (XView* xview : xviews_) {
+        xview->applyVisibility();
+    }
+    // hover 目标可能已隐藏：重算（viewAt 只命中当前工作区窗口）。
+    if (seat_ != nullptr) {
+        seat_->updateHover();
+    }
+    // 原焦点窗口被隐藏（在别的工作区）时，聚焦新工作区最上层窗口。
+    focusWorkspaceTop(workspace);
+}
+
+void Compositor::focusWorkspaceTop(int workspace) {
+    Seat* seatPtr = seat_.get();
+    if (seatPtr == nullptr) {
+        return;
+    }
+    // 若当前焦点视图仍可见则保持（例如锁定状态或层表面焦点）。
+    View* focused = seatPtr->focusedView();
+    if (focused != nullptr && focused->mapped() &&
+            !focused->minimized() && focused->workspace() == workspace) {
+        return;
+    }
+    // z 序最上层 = 列表末尾；取该工作区最上层可见 xdg 窗口。
+    // 审查 #16：切换工作区只更新激活/焦点，不重排全局 z 序。
+    for (auto it = views_.rbegin(); it != views_.rend(); ++it) {
+        View* view = *it;
+        if (view->mapped() && !view->minimized() &&
+                view->workspace() == workspace) {
+            seatPtr->focusView(view);
+            return;
+        }
+    }
+    // 审查 #4：无可见 xdg 窗口时，考虑 XWayland 窗口（最上层可见者激活）。
+    for (auto it = xviews_.rbegin(); it != xviews_.rend(); ++it) {
+        XView* xview = *it;
+        if (xview->mapped() && !xview->minimized() &&
+                xview->workspace() == workspace) {
+            xview->activate(true);
+            return;
+        }
+    }
+    // 无可见窗口：清空全部焦点（含 XView 键盘焦点残留，审查 #2）。
+    seatPtr->unfocusAll();
+}
+
+void Compositor::moveViewToWorkspace(View* view, int workspace) {
+    if (view == nullptr || workspace < 0 || workspace >= kWorkspaceCount) {
+        return;
+    }
+    if (view->workspace() == workspace) {
+        return;
+    }
+    wlr_log(WLR_INFO, "move view '%s' to workspace %d",
+            view->title() ? view->title() : "", workspace);
+    view->setWorkspace(workspace);
+    // 移出当前工作区后，若该窗口正在焦点上则切换焦点。
+    if (view->workspace() != currentWorkspace_) {
+        Seat* seatPtr = seat_.get();
+        if (seatPtr != nullptr && seatPtr->focusedView() == view) {
+            seatPtr->unfocusView(view);
+            focusWorkspaceTop(currentWorkspace_);
+        }
+    }
+    // 审查 #15：被移出窗口若是 hover 目标则刷新（viewAt 已过滤工作区）。
+    if (seat_ != nullptr) {
+        seat_->updateHover();
+    }
+}
+
+void Compositor::moveXViewToWorkspace(XView* view, int workspace) {
+    if (view == nullptr || workspace < 0 || workspace >= kWorkspaceCount) {
+        return;
+    }
+    if (view->workspace() == workspace) {
+        return;
+    }
+    wlr_log(WLR_INFO, "move xview '%s' to workspace %d",
+            view->title() ? view->title() : "", workspace);
+    view->setWorkspace(workspace);
+    // 审查 #5：移出当前工作区后清理 XView 的焦点/激活残留。
+    if (view->workspace() != currentWorkspace_) {
+        Seat* seatPtr = seat_.get();
+        if (seatPtr != nullptr) {
+            if (seatPtr->seat()->keyboard_state.focused_surface == view->surface()) {
+                seatPtr->unfocusSurface(view->surface());
+            }
+            view->activate(false);
+            focusWorkspaceTop(currentWorkspace_);
+        }
+    }
+    if (seat_ != nullptr) {
+        seat_->updateHover();
+    }
+}
+
 // ---- XWayland 窗口列表 ----
 
 void Compositor::addXView(XView* view) {
@@ -342,6 +465,9 @@ void Compositor::addXView(XView* view) {
 
 void Compositor::removeXView(XView* view) {
     xviews_.erase(std::remove(xviews_.begin(), xviews_.end(), view), xviews_.end());
+    if (seat_ != nullptr) {
+        seat_->onXViewDestroyed(view);
+    }
 }
 
 void Compositor::raiseXView(XView* view) {
@@ -350,10 +476,25 @@ void Compositor::raiseXView(XView* view) {
         xviews_.erase(it);
         xviews_.push_back(view);
     }
-    // XWayland 窗口无独立装饰节点（M8 统一），scene 节点置顶即可。
+    // XWayland 窗口由内容（scene surface）与装饰（decorationTree_）组成
+    //（M7 续 SSD）：先置顶内容，再把装饰放到内容之上。
     wlr_scene_surface* sceneSurface = view->sceneSurface();
     if (sceneSurface != nullptr) {
         wlr_scene_node_raise_to_top(&sceneSurface->buffer->node);
+        wlr_scene_tree* decoration = view->decorationTree();
+        if (decoration != nullptr) {
+            wlr_scene_node_place_above(&decoration->node, &sceneSurface->buffer->node);
+        }
+    }
+}
+
+// M8：推进全部窗口动画一帧（Output 帧循环调用）。
+void Compositor::tickAnimations() {
+    for (View* view : views_) {
+        view->tickAnimation();
+    }
+    for (XView* xview : xviews_) {
+        xview->tickAnimation();
     }
 }
 
@@ -725,11 +866,10 @@ void Compositor::handleNewXSurface(wl_listener* listener, void* data) {
     auto* compositor = W10DE_CONTAINER_OF(listener, Compositor, newXSurfaceListener_);
     auto* xsurface = static_cast<wlr_xwayland_surface*>(data);
     // 所有权为自身（destroy 回调 delete this）；map 时加入列表。
+    // 审查 #14：xsurface 来自事件必非空，无需重复检查；构造内
+    // override-redirect 分支可能跳过装饰，装饰缺失时其余路径均判空安全。
     auto* view = new XView(*compositor, xsurface);
-    if (view->xsurface() == nullptr) {
-        wlr_log(WLR_ERROR, "failed to create xview");
-        delete view;
-    }
+    (void)view;
 }
 
 void Compositor::handleXWaylandReady(wl_listener* listener, void* /*data*/) {

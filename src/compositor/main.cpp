@@ -28,6 +28,9 @@ void printUsage(const char* prog) {
         "  --screenshot <path> 退出前将输出保存为 PNG 并验证中心像素（默认不保存）\n"
         "  --socket <name>     固定 Wayland socket 名（会话启动用；默认自动生成）\n"
         "  --config <path>     配置文件路径（默认 ~/.config/w10de/config.ini）\n"
+        "  --workspace <n>     启动工作区 0-3（默认 0；M7 多工作区）\n"
+        "  --switch-ws <f>:<n> 渲染到第 f 帧时切换到工作区 n（可重复；headless 验证用）\n"
+        "  --snap-test         每个窗口 map 后自动贴左半屏（M8 Aero Snap 验证）\n"
         "  --verbose           输出调试日志\n"
         "  --help              显示本帮助\n"
         "环境变量：\n"
@@ -82,8 +85,48 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
             opts.configPath = argv[++i];
+        } else if (arg == "--workspace") {
+            opts.initialWorkspace = parseInt("--workspace");
+        } else if (arg == "--switch-ws") {
+            // 格式 frame:workspace（如 600:1）；帧与工作区均需为合法整数。
+            if (i + 1 >= argc) {
+                std::fprintf(stderr, "option --switch-ws requires an argument\n");
+                return 1;
+            }
+            const std::string spec = argv[++i];
+            const size_t colon = spec.find(':');
+            if (colon == std::string::npos) {
+                std::fprintf(stderr,
+                    "option --switch-ws requires 'frame:workspace', got '%s'\n",
+                    spec.c_str());
+                return 1;
+            }
+            char* end = nullptr;
+            errno = 0;
+            const long frame = std::strtol(spec.c_str(), &end, 10);
+            if (end != spec.c_str() + static_cast<std::ptrdiff_t>(colon) ||
+                    errno == ERANGE || frame < 1 || frame > INT_MAX) {
+                std::fprintf(stderr,
+                    "invalid --switch-ws frame in '%s' (must be >= 1; "
+                    "帧从 1 起计数)\n", spec.c_str());
+                return 1;
+            }
+            errno = 0;
+            const long ws = std::strtol(spec.c_str() + colon + 1, &end, 10);
+            if (end == spec.c_str() + colon + 1 || *end != '\0' ||
+                    errno == ERANGE || ws < 0 ||
+                    ws >= w10de::Compositor::kWorkspaceCount) {
+                std::fprintf(stderr,
+                    "invalid --switch-ws workspace in '%s' (must be 0..%d)\n",
+                    spec.c_str(), w10de::Compositor::kWorkspaceCount - 1);
+                return 1;
+            }
+            opts.workspaceSwitches.emplace_back(static_cast<int>(frame),
+                                                static_cast<int>(ws));
         } else if (arg == "--verbose") {
             opts.verbose = true;
+        } else if (arg == "--snap-test") {
+            opts.snapTest = true;
         } else if (arg == "--help") {
             printUsage(argv[0]);
             return 0;
@@ -121,6 +164,23 @@ int main(int argc, char* argv[]) {
         std::fprintf(stderr,
             "--screenshot requires --frames > 0 (截图在渲染指定帧数后执行)\n");
         return 1;
+    }
+    if (opts.initialWorkspace < 0 ||
+            opts.initialWorkspace >= w10de::Compositor::kWorkspaceCount) {
+        std::fprintf(stderr, "invalid --workspace: %d (must be 0..%d)\n",
+                     opts.initialWorkspace,
+                     w10de::Compositor::kWorkspaceCount - 1);
+        return 1;
+    }
+    // --switch-ws 的帧需在 --frames 之前（截图前完成切换才可见）。
+    for (const auto& [frame, ws] : opts.workspaceSwitches) {
+        (void)ws;
+        if (opts.frames > 0 && frame >= opts.frames) {
+            std::fprintf(stderr,
+                "invalid --switch-ws frame %d: must be < --frames %d\n",
+                frame, opts.frames);
+            return 1;
+        }
     }
 
     w10de::Compositor compositor(std::move(opts));

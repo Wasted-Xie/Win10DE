@@ -23,6 +23,7 @@ namespace w10de {
 
 class Compositor;
 class View;
+class XView;
 class LayerSurface;
 
 class Seat {
@@ -39,6 +40,8 @@ public:
     // ---- 窗口交互（由 View 的 request_move/resize 触发）----
     void beginMove(View* view);
     void beginResize(View* view, uint32_t edges);
+    // M7 续：XWayland 窗口标题栏拖动（SSD）。
+    void beginMoveXView(XView* view);
     void endInteractive();
 
     // ---- 焦点 ----
@@ -54,6 +57,10 @@ public:
     void unfocusAll();
     // 视图销毁时清理本 seat 中的引用（焦点/拖动），由 Compositor::removeView 调用。
     void onViewDestroyed(View* view);
+    // M7 续：XView 销毁时清理引用（焦点/hover/拖动），由 Compositor::removeXView 调用。
+    void onXViewDestroyed(XView* view);
+    // M2b hover 打磨：更新装饰按钮悬停高亮。
+    void updateHover();
 
     wlr_seat* seat() const { return seat_; }
 
@@ -97,6 +104,10 @@ private:
     wlr_keyboard* keyboard_ = nullptr;
 
     View* focusedView_ = nullptr;
+    // M2b hover 打磨：当前 hover 的视图（装饰按钮高亮跟踪）。
+    View* hoverView_ = nullptr;
+    // M7 续：当前 hover 的 XWayland 视图（装饰按钮高亮跟踪）。
+    XView* hoverXView_ = nullptr;
     // 已转发 press 的按键（按 button 跟踪，release 只转发有对应 press 的
     // 按键，避免"幽灵 release"；标题栏/空白处吞掉的 press 不在此集合）。
     std::set<uint32_t> pressedButtons_;
@@ -105,6 +116,8 @@ private:
     enum class DragMode { None, Move, Resize };
     DragMode dragMode_ = DragMode::None;
     View* dragView_ = nullptr;
+    // M7 续：拖动中的 XWayland 窗口（Move 模式；XView 无 Resize）。
+    XView* dragXView_ = nullptr;
     uint32_t resizeEdges_ = 0;
     double grabX_ = 0.0, grabY_ = 0.0;        // 拖动开始时光标位置（布局坐标）
     int grabGeomX_ = 0, grabGeomY_ = 0;       // 拖动开始时视图位置

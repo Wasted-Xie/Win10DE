@@ -11,11 +11,11 @@
 | 目标 | 在 Linux 上**从零实现** Win10 风格桌面环境（MVP：窗口管理、任务栏/开始菜单、桌面、托盘、锁屏） |
 | 技术栈 | C++20 + **wlroots 0.19.0**（compositor）+ **Qt 6 Widgets**（shell 客户端） |
 | 形态 | 双进程：`w10compositor`（wlroots compositor）+ `w10shell`（Qt layer-shell 客户端） |
-| 工作区 | `C:\Projects\Win10DE`（**Windows 机器**，无编译器、无 WSL 发行版、无 Docker——所有代码**从未编译验证**） |
+| 工作区 | `C:\Projects\Win10DE`（Windows 机器，开发用）；**WSL2 Arch（/root/win10de）为编译/验证环境**（2026-08 起，全部代码已在此编译验证） |
 | API 参考 | `third_party/wlroots/` = wlroots 0.19.0 完整源码（git tag `0.19.0`），所有 API 均对照它核实 |
-| 语言规则 | 用户使用简体中文交流；工作区 AGENTS.md 要求：执行命令/删改文件前需用户确认 |
+| 语言规则 | 用户使用简体中文交流；工作区 AGENTS.md 要求：执行命令/删改文件前需用户确认（审查流程豁免过） |
 
-**最重要的事实：全部代码未编译。** 开发在 Windows 上无任何工具链。接手后的第一要务是配置 Linux 构建环境（WSL2 或真机），编译并修复错误，跑通 headless 冒烟测试。
+**开发流**：Windows 侧编辑 → 复制到 WSL（`/mnt/c/Projects/Win10DE` → `/root/win10de`）→ WSL 编译 + headless 截图/像素验证。WSL 仓库无 git，靠文件复制同步。
 
 ---
 
@@ -31,12 +31,12 @@
 | M4 | 桌面（background 层）：壁纸（`--wallpaper` 或内置 Win10 渐变）、桌面图标（QFileSystemModel + 双击打开） | ✅ 编码完成 |
 | M5 | 系统托盘：SNI 宿主（纯 Qt D-Bus `org.kde.StatusNotifierWatcher`，无 KF）+ 任务栏托盘区（图标/Activate/ContextMenu） | ✅ 编码完成 |
 | M6 | 锁屏：`w10lock` 进程（**ext-session-lock-v1**，0.19 已移除旧 input-inhibitor）+ compositor 锁定/解锁 + wl_shm 渲染 + 任意键解锁 | ✅ 编码完成 |
-| M2b | 标题栏文字渲染（cairo/pango）与按钮 hover | ⬜ 未开始 |
-| M7 | 会话集成：`w10-session` 启动器（固定 socket + 退出联动 + autostart）、compositor `--socket`、锁屏触发（Win+L / D-Bus `org.w10de.Shell.Lock()`）、配置系统（`src/ipc/config.{h,cpp}`）、**XWayland**（`wlr_xwayland` lazy + XView：map/unmap/激活/关闭/最大化/最小化/configure、scene/seat 集成、DISPLAY 注入）；**未完项**：多工作区、XView 装饰与任务栏集成 | 🔶 部分完成 |
-| M7 | 会话集成（launcher/autostart/配置）、XWayland、多工作区 | ⬜ 未开始 |
-| M8 | 视觉打磨（圆角/阴影/动画/Aero Snap） | ⬜ 未开始 |
+| M2b | 标题栏文字渲染（cairo/pango → 自实现 wlr_buffer → scene buffer）与按钮 hover 打磨 | ✅ 完成（2026-08 headless 验证通过） |
+| M7 | 会话集成：`w10-session` 启动器（固定 socket + 退出联动 + autostart）、compositor `--socket`、锁屏触发（Win+L / D-Bus `org.w10de.Shell.Lock()`）、配置系统（`src/ipc/config.{h,cpp}`）、**XWayland**（`wlr_xwayland` lazy + XView：map/unmap/激活/关闭/最大化/最小化/configure、scene/seat 集成、DISPLAY 注入） | ✅ 完成 |
+| M7 续 | **多工作区**（`View/XView::workspace_` 归属、`switchWorkspace`/`moveViewToWorkspace`、统一 `applyVisibility`、命中过滤）+ **XWayland SSD 装饰与任务栏集成**（XView 同款标题栏/按钮/文字/阴影 + foreign-toplevel handle + 拖动交互 + override-redirect 处理 + set_class→app_id） | ✅ 完成（多工作区 4 场景 headless 验证；XWayland 因 WSL 无 X11 仅静态审查+编译） |
+| M8 | 视觉打磨：窗口阴影（自绘 ARGB 渐变 buffer）、Aero Snap（Win+←/→ 半屏 / ↑ 最大化 / ↓ 还原 + 平滑动画）、窗口移动动画；圆角遵循 Win10 直角设计（UI 元素 Qt 侧 2px 圆角） | ✅ 完成（阴影/Snap headless 验证通过） |
 
-**验证状态**：三轮子代理静态审查全部完成（共 92 问题：10 CRITICAL + 15 HIGH + 32 MEDIUM + 35 LOW，全部修复或标注，5 项可接受风险）。**2026-08 完成首次真实编译 + headless 冒烟 + 完整渲染验证**（WSL2 Arch：vendored wlroots 0.19 源码编译 + 三个二进制构建成功；`--frames 5` 截图像素校验通过；compositor+w10shell 同跑验证**桌面壁纸渐变 + 任务栏（#2D2D2D）渲染成功**，退出码 0）。编译期与渲染期修复详见 README「首次真实编译/完整渲染验证」节；**wlroots 头 C++ 补丁由构建系统自动注入**（`cmake/WlrootsPatchHeaders.cmake`，编译原版源码 + 安装/系统头补丁副本，不再手工改 vendored 头）。
+**验证状态**：多轮子代理静态审查全部完成（前 3 轮共 92 问题全部修复或标注；M2b/M7续/M8 又 3 轮审查并修复，见 README「M2b / M7 续 / M8 开发与验证」节）。**2026-08 完成真实编译 + headless 冒烟 + 完整渲染验证**（WSL2 Arch：vendored wlroots 0.19 源码编译 + 各二进制构建成功；`--frames 5` 截图像素校验通过；compositor+w10shell 同跑验证桌面壁纸渐变 + 任务栏渲染成功）。**M2b/M7续/M8 专项验证**（2026-08）：标题栏白字/关闭钮像素、多工作区 4 场景、窄窗口文字清空、窗口阴影、Aero Snap 贴边全部 headless 截图/像素验证通过。XWayland 运行时验证待真机（WSL 无 X11）。
 
 ---
 
@@ -135,6 +135,16 @@ w10shell（Qt 6 Widgets，layer-shell 客户端）
 | **开始菜单 Win10 布局**：三列——左侧 48px 窄栏（#171717：☰ 汉堡展开/折叠 200px、底部功能区账户→设置/文档/图片→电源最底，电源弹关机/重启/睡眠菜单与侧栏等宽 MVP 占位）、应用列表列 240px（5×按钮宽）、磁贴区 288px（6×按钮宽），总宽 576 | 与 Win10 UI 对齐（渲染验证 x=48/576 分区边界精确、三列 74/129/197 色）；账户/设置动作与真实关机为后续里程碑（PAM/systemctl） |
 | **电源/账户接线**：电源菜单执行 systemctl（poweroff/reboot/suspend）；账户按钮 → D-Bus org.w10de.Shell.Lock → w10lock（首次端到端验证：busctl 调用→w10lock→compositor session locked） | **LockService 需 Q_CLASSINFO("D-Bus Interface","org.w10de.Shell")**（默认接口名是类名，外部调用不到——实测）；w10lock 定位 PATH 优先 + /usr/local/bin 兜底 |
 | **磁贴四种尺寸**（`TileButton`+`FlowLayout`，右键菜单自由设置）：小 48×48 / 中 **100×100**（默认）/ 大 **204×204** / 宽 **204×100**；磁贴区 **316px**（6 小磁贴+7×4 间隙，边缘 4px）、水平/行间距 4px、每行 3 个中磁贴（实测 100px、4px 间隙/边缘精确） | Win10 磁贴大小，4px 网格基准（中=2 小+1 间隙、大=4 小+3 间隙）；**FlowLayout 宽度取父 widget 实际宽度**（setGeometry rect 在 layer-shell 时序中不稳——真实运行验证）；尺寸变化触发重排 |
+| **M2b 标题文字：cairo/pango → 自实现 `wlr_buffer`**（`wlr_buffer_init` + DATA_PTR access → `wlr_scene_buffer` 自动上传纹理） | 0.19 **无 `wlr_buffer_from_texture`**；scene buffer 渲染时自动上传，无需手动建 texture；cairo 1.18/pango 1.58 已在 WSL 环境；ARGB32 预乘与 DRM_FORMAT_ARGB8888 字节序一致 |
+| **xdg-shell 初始 configure 由 compositor 主动回复**（首次 commit 的 `initial_commit` → `wlr_xdg_toplevel_set_size(0,0)`） | wlroots 0.19 `create_xdg_toplevel` **不自动调度初始 configure**（对照源码核实：schedule_configure 只在 set_* API 与 popup 路径）——不回复则客户端永久卡在等 configure、窗口永不 map（真实运行定位） |
+| **标题文字/阴影自绘 buffer 的引用计数纪律**：`set_buffer`（scene lock+unlock）→ 旧引用 `wlr_buffer_drop`；析构先销毁 scene 节点再 drop；空标题/窄窗口 `set_buffer(NULL)` 清空 | 防泄漏/双重释放（子代理逐行核对 vendored buffer.c 引用模型）；文字节点 z 序在按钮之下（背景→文字→按钮，先创建者在下） |
+| **M7 续 多工作区**：`workspace_` 归属 + 统一 `applyVisibility()`（mapped && !minimized && workspace==current）；`switchWorkspace` 刷新可见性+hover+焦点；`focusWorkspaceTop` 只更新焦点不重排 z 序；命中检测过滤非当前工作区 | Win10 虚拟桌面语义；可见性单一入口避免 set_enabled 分散；切换不重排堆叠（审查 #16） |
+| **跨类型焦点统一**（xdg + XWayland）：`focusView/focusSurface/unfocusAll` 全路径同步失活另一类型窗口；XView `activate(true)` 先 focusSurface（统一失活）再激活自身 | 审查 #2：焦点/激活必须唯一，否则输入进入隐藏窗口或双激活 |
+| **XWayland override-redirect 窗口不加装饰/任务栏条目**（X11 菜单、工具提示） | 审查 #8：此类窗口自由定位，无 WM 标题栏语义 |
+| **M8 窗口阴影：自绘 ARGB8888 预乘渐变环**（切比雪夫距离线性衰减，内缘 α≈0.36→外缘 0；内部区域 α=0）挂在装饰树最底层 | Win10 窗口阴影观感；纯内存填充无额外依赖；内部必须 α=0（否则整窗被遮罩压暗——首版实测 bug） |
+| **M8 Aero Snap**：Win+←/→ 半屏（保存 restore 几何、可还原）、Win+↑ 最大化、Win+↓ 还原；最大化与贴边互斥（进入一方先退出另一方） | Win10 Snap 语义；restore 几何复用最大化机制 |
+| **M8 动画：帧插值 ease-out**（每帧 +0.12，`tickAnimations` 由输出帧循环驱动；拖动开始 `cancelAnimation`） | Snap/还原平滑移动；与用户操作无竞态（拖动即取消）；headless 用 `--snap-test` 验证最终位置 |
+| **M8 审查修复**：snap→最大化保留 restore 几何 + 取消动画（不调 unsnap，防返回动画拉回/恢复点被半屏值覆盖）；maximized→snap 先拷出恢复目标再落回（resize 异步竞态）；XView OR 切换全量置 null 装饰节点（shadowNode_ 悬垂 UAF）；beginResize 补 cancelAnimation；快捷键纯 LOGO 组合；多输出动画仅第一输出推进；unmap/dissociate 取消动画 | 子代理审查 S1/S2 严重 + M1/M2 中等 + 12 轻微，全部修复后回归通过 |
 
 ---
 
@@ -168,15 +178,17 @@ docs/HANDOFF.md                     # 本文档
 .gitignore
 
 src/compositor/
-  server.{h,cpp}                    # Compositor：生命周期/协议/层锚/arrange/可用区
-  output.{h,cpp}                    # Output：配置/背景/帧循环/截图验证
-  view.{h,cpp}                      # View：窗口 + SSD 装饰 + foreign-toplevel 同步
-  xview.{h,cpp}                     # XView：XWayland 窗口（M7，无装饰基础版）
-  seat.{h,cpp}                      # Seat：输入/焦点/拖动/装饰交互/层表面命中
+  server.{h,cpp}                    # Compositor：生命周期/协议/层锚/arrange/可用区/多工作区/动画 tick
+  output.{h,cpp}                    # Output：配置/背景/帧循环/截图验证/定时切工作区
+  view.{h,cpp}                      # View：xdg 窗口 + SSD 装饰 + 标题文字 + 阴影 + Snap/动画 + ft 同步
+  xview.{h,cpp}                     # XView：XWayland 窗口 + 同款装饰/任务栏/阴影/动画（M7 续）
+  seat.{h,cpp}                      # Seat：输入/焦点/拖动/装饰交互/层表面命中/hover
   layer_shell.{h,cpp}               # LayerSurface：层表面管理/命中
+  titletext.{h,cpp}                 # M2b：cairo/pango 标题文字 → 自实现 wlr_buffer
+  shadow.{h,cpp}                    # M8：窗口阴影渐变 buffer（自绘）
   util.h                            # W10DE_CONTAINER_OF 宏（C++ 版 container_of）
-  main.cpp                          # 参数解析
-  CMakeLists.txt                    # WLR_USE_UNSTABLE、PkgConfig::WLROOTS/DRM/XKBCOMMON/WAYLAND_SERVER
+  main.cpp                          # 参数解析（--width/--frames/--workspace/--switch-ws/--snap-test 等）
+  CMakeLists.txt                    # WLR_USE_UNSTABLE、PkgConfig::WLROOTS/DRM/XKBCOMMON/WAYLAND_SERVER/CAIRO/PANGO
 
 src/shell/
   main.cpp                          # 入口：layer-shell 配置（桌面/任务栏/开始菜单）+ --wallpaper
@@ -227,17 +239,22 @@ third_party/
 ### 7.2 行为待验证
 - ✅ headless 冒烟已通过（2026-08：`pixel verification passed`，#0078D7，退出码 0）。
 - ✅ 锁屏链端到端（2026-08：busctl 调 org.w10de.Shell.Lock → w10lock 启动 → compositor `session locked`）；剩余：锁屏画面渲染与任意键解锁的真机确认。
+- ✅ M2b 标题栏文字/按钮（2026-08：白字 385 像素 + 关闭钮红 1472 像素）、窄窗口清空。
+- ✅ M7 续 多工作区 4 场景（默认可见/他区隐藏/切走隐藏/切回可见）。
+- ✅ M8 阴影（阴影带变暗、内容区无污染）与 Aero Snap（贴左半屏 960×1048 at 0,0）。
 - ⬜ 嵌套验证（wayland backend + WSLg/weston）：开窗口、拖动、标题栏按钮、任务栏窗口列表、开始菜单交互、电源菜单 systemctl 实测（WSL 可测，勿真关机）。
-- ⬜ XWayland：WSL 中 `/tmp/.X11-unix` 为只读挂载导致 wlr_xwayland 创建失败（已降级为警告）；真机验证 X11 客户端。
+- ⬜ XWayland：WSL 中 `/tmp/.X11-unix` 为只读挂载导致 wlr_xwayland 创建失败（已降级为警告）；**XView 装饰/拖动/override-redirect/set_class 未运行时验证**，真机验证 X11 客户端。
 - ⬜ DRM 真机：headless 之外的后端需真机/KVM。
 
 ### 7.3 已知简化（M3 阶段刻意为之）
 - 开始菜单无搜索框、无固定磁贴（仅 .desktop 列表网格）。
 - 单键盘设备（多键盘热插拔被忽略）、无触摸/数位板。
 - foreign-toplevel `activate()` 硬编码 seat 名 "seat0"。
-- fullscreen 按最大化处理；无工作区；无 XWayland。
+- fullscreen 按最大化处理；窗口 Snap 无拖拽到屏幕边缘触发（仅快捷键，MVP）；无四分之一 Snap。
+- XView 拖动期间每光标事件一次 `wlr_xwayland_surface_configure`（审查 #9 记录，未节流）；xdg/XView 命中优先级与 scene z 序分裂（审查 #3 记录，重叠窗口场景）。
 - SNI 托盘：`IconPixmap` 的 QDBusArgument 提取与 ARGB32 字节序（小端假设）待真机验证；`IconName` 主题查找失败时图标可能不显示；中键 SecondaryActivate 未连接。
 - 锁屏（M6）：任意键解锁（无密码验证）；单锁屏 surface（首个输出）；`wl_shm` 客户端渲染（shm_open/mmap/QImage 字节序）待真机验证；`wl_seat` 的 capabilities 事件已处理（键盘绑定），但 seat name 事件忽略；锁屏进程崩溃时合成器自动解锁（ext-session-lock 语义，属预期）。
+- 窗口动画仅位置插值（Snap/还原）；尺寸变化（resize）仍即时请求、无动画。
 
 ---
 
@@ -263,19 +280,19 @@ WLR_BACKEND=wayland ./build/src/compositor/w10compositor --frames 0
 
 ## 9. 下一步计划（按优先级）
 
-1. **配置构建环境并编译**（最大优先）：WSL2 装发行版（需用户确认）或真机；安装依赖（wlroots 0.19 可能需源码编译——`third_party/wlroots` 已备好）；修复编译错误。
-2. **headless 冒烟**：截图验证 + 像素校验通过（M0 验收标准）。
-3. **嵌套验证 M1-M3**：开窗口/标题栏/任务栏/开始菜单交互。
-4. **M7 收尾**：多工作区；XView 补齐（SSD 装饰、foreign-toplevel 任务栏集成、拖动）。
-5. **M2b**：标题栏文字（cairo/pango → `wlr_texture_from_pixels` 路径已确认存在；注意 0.19 **无 `wlr_buffer_from_texture`**，scene 显示需另找 buffer 来源，实现时调研）。
-6. **M8 视觉打磨**：圆角/阴影/动画/Aero Snap；锁屏接入密码验证（PAM）。
+1. **M8 审查收尾**：等待/处理 M8 子代理审查结果（阴影边界、动画竞态、snap 状态机）。
+2. **真机/嵌套验证**（需用户环境）：DRM 后端、XWayland 运行时（XView 装饰/拖动/override-redirect）、嵌套 wayland 后端（窗口/任务栏/开始菜单交互）、锁屏画面与任意键解锁。
+3. **交互打磨**（可选）：拖拽到屏幕边缘触发 Snap、XView 拖动 configure 节流、xdg/XView 统一命中 z 序（审查 #3/#9）。
+4. **锁屏密码验证**（PAM）与电源菜单真实动作确认。
+5. **提交/推送**：当前 M2b/M7续/M8 改动均在本地（提交 `962f014` 之后），需用户授权后 commit + push。
 
 ---
 
 ## 10. 交接注意事项
 
-- **用户偏好**：简体中文交流；AGENTS.md 要求执行命令/文件变更前经用户确认（交接后继续遵守）；回答结构化、准确性优先、不伪造数据。
-- **goal 状态**：`goal-eed9bce7-0358-4504-a2ed-cf597ebe73fd` 处于 **paused**（用户暂停等待交接）。接手续跑时用 `update_goal action=resume` 恢复（需用户指示继续）。
+- **用户偏好**：简体中文交流；AGENTS.md 要求执行命令/文件变更前经用户确认（审查流程豁免过）；回答结构化、准确性优先、不伪造数据。
+- **开发流**：Windows 编辑 → 复制文件到 WSL（`/root/win10de`）→ WSL 编译（`cmake --build build --target w10compositor`）→ headless 脚本验证。**WSL 无 git**，勿在 WSL 侧提交。
+- **验证脚本**（Windows 侧 `%TEMP%`，经 `/mnt/c/Users/Administrator/AppData/Local/Temp/` 在 WSL 执行）：`w10de-title.sh`（标题栏白字/红钮）、`w10de-ws.sh`（多工作区 4 场景）、`w10de-narrow.sh`（窄窗口）、`w10de-shadow.sh`（阴影）、`w10de-snap.sh`（Snap）、`w10de-syncbuild.sh`（同步+编译）。
 - **wlroots 头文件无 extern "C" 保护**：C++ 引用必须手动包裹；不稳定接口需要 `WLR_USE_UNSTABLE`。
 - **先读**：本文档 → `docs/ARCHITECTURE.md` → `README.md` → 相关源码，再改代码。
 - **不要**重新核对已确认的 API（见第 4 节决策表与源码注释中的"已确认"标注）；新增 wlr_* 调用时对照 `third_party/wlroots/include/`。

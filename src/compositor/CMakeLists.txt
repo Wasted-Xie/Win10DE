@@ -11,6 +11,8 @@ add_executable(w10compositor
     view.cpp
     layer_shell.cpp
     xview.cpp
+    titletext.cpp
+    shadow.cpp
     ${CMAKE_SOURCE_DIR}/src/ipc/config.cpp
 )
 
@@ -30,10 +32,15 @@ target_compile_definitions(w10compositor PRIVATE WLR_USE_UNSTABLE)
 # 而 compositor 直接调用 wl_display_create 等 API，须显式链接。
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(WAYLAND_SERVER REQUIRED IMPORTED_TARGET wayland-server)
+# M2b 标题栏文字（cairo/pango）。
+pkg_check_modules(CAIRO REQUIRED IMPORTED_TARGET cairo)
+pkg_check_modules(PANGO REQUIRED IMPORTED_TARGET pangocairo)
 
 target_link_libraries(w10compositor PRIVATE
     ${WLROOTS_TARGET}
     PkgConfig::DRM
     PkgConfig::XKBCOMMON
     PkgConfig::WAYLAND_SERVER
+    PkgConfig::CAIRO
+    PkgConfig::PANGO
 )

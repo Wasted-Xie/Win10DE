@@ -145,6 +145,19 @@ void Output::handleFrame() {
     ++framesRendered_;
     wlr_log(WLR_DEBUG, "frame %d rendered on '%s'", framesRendered_, output_->name);
 
+    // M7 续：headless 验证用定时工作区切换（--switch-ws f:n，按帧序应用）。
+    for (const auto& [frame, workspace] : compositor_.options().workspaceSwitches) {
+        if (framesRendered_ == frame) {
+            compositor_.switchWorkspace(workspace);
+        }
+    }
+    // M8：推进窗口动画一帧（Snap/还原平滑移动）。
+    // 审查：仅第一个输出推进，多输出时动画速度不随输出数翻倍
+    //（tickAnimations 遍历全部窗口，每输出一次即整体推进一次）。
+    if (compositor_.firstOutput() == output_) {
+        compositor_.tickAnimations();
+    }
+
     const int limit = compositor_.options().frames;
     if (limit > 0 && framesRendered_ >= limit) {
         int exitCode = 0;

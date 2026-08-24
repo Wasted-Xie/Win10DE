@@ -55,12 +55,13 @@ Linux 上的 Windows 10 风格桌面环境，从零实现。
 - [x] M7 会话集成（续）：**XWayland**（`wlr_xwayland` lazy 模式 + XView 窗口类：
       map/unmap/激活/关闭/最大化/最小化/configure、scene 集成、seat 命中、
       DISPLAY 环境注入）——未编译验证
+- [x] M2b 标题栏文字渲染（cairo/pango）与 hover 打磨（2026-08 headless 验证通过）
+- [x] M7 续：**多工作区**（窗口归属/切换/显示隐藏，Win+1..4；headless 4 场景验证通过）
+- [x] M7 续：**XWayland SSD 装饰 + 任务栏集成**（XView 同款 Win10 标题栏 + foreign-toplevel handle；WSL 无 XWayland 未运行时验证）
+- [x] M8 视觉打磨：窗口阴影（自绘渐变）、Aero Snap（Win+←/→/↑/↓ + 平滑动画）、窗口移动动画；圆角遵循 Win10 直角设计（UI 元素 Qt 侧 2px 圆角）（2026-08 验证通过）
 - [x] 编译与冒烟验证（headless 运行 + 截图 + 像素校验，2026-08 Arch/WSL2 通过）
 - [x] 完整渲染验证（compositor + w10shell 同跑：桌面壁纸渐变 + 任务栏渲染成功，2026-08）
-- [ ] M7 续：多工作区；XWayland 装饰/任务栏集成（M8）
-- [ ] M2b 标题栏文字渲染（cairo/pango）与交互打磨
-- [ ] M7 会话集成 / XWayland / 多工作区
-- [ ] M8 视觉打磨（圆角、阴影、动画、Aero Snap）
+- [ ] 真机/嵌套环境验证（DRM、XWayland 运行时、鼠标键盘实际交互）
 
 详见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
@@ -149,7 +150,11 @@ WLR_BACKEND=wayland ./build/src/compositor/w10compositor --frames 0
 
 - headless 预期：正常退出（exit 0），日志含 `pixel verification passed`，
   生成 1920x1080 纯色 Win10 蓝（#0078D7）PNG。
-- 快捷键：`Win+Q` 关闭焦点窗口，`Win+M` 最小化，`Win+F` 最大化，`Win+Esc` 退出。
+- 快捷键：`Win+Q` 关闭焦点窗口，`Win+M` 最小化，`Win+F` 最大化，`Win+Esc` 退出，
+  `Win+1..4` 切换工作区（M7 续），`Win+←/→` 左/右半屏贴边（Aero Snap，M8），
+  `Win+↑` 最大化、`Win+↓` 还原（M8）。
+- headless 验证参数：`--workspace <n>` 启动工作区、`--switch-ws <frame>:<ws>` 定时
+  切换（可重复）、`--snap-test` 首窗口自动贴左半屏。
 - 其他参数见 `--help`。
 
 ### 代码与 API 参考
@@ -192,6 +197,58 @@ WLR_BACKEND=wayland ./build/src/compositor/w10compositor --frames 0
 - 结果：桌面壁纸渐变 + 任务栏（#2D2D2D）渲染成功，238 色采样，`pixel verification passed (content rendered)`
 - **电源/账户接线**（2026-08）：电源菜单（关机/重启/睡眠）执行 **systemctl**（poweroff/reboot/suspend，systemd 环境）；账户按钮 → D-Bus `org.w10de.Shell.Lock()` → w10lock 锁屏（**首次端到端验证**：busctl 调用 → w10lock 启动 → compositor `session locked`）
 - **LockService D-Bus 接口修复**：需显式 `Q_CLASSINFO("D-Bus Interface", "org.w10de.Shell")`（默认接口名是类名，外部 dbus-send/busctl 调用不到——实测发现）；w10lock 定位增强（PATH 优先 + /usr/local/bin 兜底）
+
+### M2b / M7 续 / M8 开发与验证（2026-08，headless）
+
+- **M2b 标题栏文字**（`src/compositor/titletext.{h,cpp}`）：cairo/pango 渲染 ARGB32
+  预乘像素 → 自实现 `wlr_buffer`（`wlr_buffer_init` + DATA_PTR access）→
+  `wlr_scene_buffer` 自动上传纹理。白字 #FFFFFF、单行、超长省略（`pango_layout_set_width`
+  触发 ellipsize）、垂直居中。CMake 链接 `PkgConfig::CAIRO/PANGO`。
+  验证：标题栏 #2D2D2D + 白字 385 像素 + 关闭钮红 1472 像素（窗口 640×480 at 100,80）。
+- **xdg-shell 初始 configure 修复**（关键协议 bug）：wlroots 0.19 的 `create_xdg_toplevel`
+  **不自动调度初始 configure**——compositor 必须在 xdg_surface 首次 commit
+  （`initial_commit`）后调用 `wlr_xdg_toplevel_set_size(0,0)`（tinywl 同款处理），
+  否则客户端永久卡在等 configure、窗口永不 map（真实运行定位：窗口创建但无
+  "view mapped"、截图纯蓝）。
+- **M2b 审查修复**（子代理审查 4 中等项 + 若干轻微项）：窄窗口（textW≤0）时清空
+  标题文字 buffer 防止覆盖按钮（`wlr_scene_buffer_set_buffer(node, NULL)`）；空标题/
+  清空标题清旧文字；`titleText_` 为空时宽度变化也触发渲染；hover 感知 overlay/top
+  层表面遮挡；标题栏装饰区不再 fallthrough 到底层（滚轮/右键不落桌面）；拖动结束
+  补 hover 刷新；文字节点 z 序移至按钮之下（标题栏背景→文字→按钮）。窄窗口
+  （100×100）验证：0 白字 + 关闭钮红可见。
+- **M7 续 多工作区**：`View/XView::workspace_` 归属（创建时取当前工作区）、
+  `Compositor::switchWorkspace/moveViewToWorkspace/moveXViewToWorkspace/focusWorkspaceTop`、
+  统一可见性 `applyVisibility()`（mapped && !minimized && workspace==current）。
+  命中检测（viewAt/surfaceAt）过滤非当前工作区窗口。headless 验证 4 场景
+  （`--workspace`/`--switch-ws`）：默认可见 / 他区隐藏 / 切走隐藏 / 切回可见 全部 PASS。
+- **M7 续 XWayland SSD + 任务栏**：XView 增加与 xdg View 同款装饰树（标题栏+按钮+
+  标题文字+阴影）、foreign-toplevel handle（任务栏窗口列表）、标题栏拖动/按钮交互
+  （Seat 双窗口类型统一 hover/命中）、`set_class` → app_id、override-redirect 窗口
+  跳过装饰与任务栏（X11 菜单/提示）。WSL headless 无 XWayland，仅静态审查 + 编译验证。
+- **M8 视觉打磨**：
+  - **窗口阴影**（`src/compositor/shadow.{h,cpp}`）：自绘 ARGB8888 预乘渐变环
+    （切比雪夫距离线性衰减，内缘 α≈0.36 → 外缘 0），挂在装饰树最底层（覆盖窗口外
+    8px）。验证：窗口外侧阴影带显著暗于背景、内容区无污染。
+  - **Aero Snap**：`Win+←/→` 左/右半屏（保存 restore 几何，可还原）、`Win+↑` 最大化、
+    `Win+↓` 还原（最大化/贴边均恢复）。最大化与贴边互斥。验证（`--snap-test`）：
+    窗口贴左半屏（960×1048 at 0,0）、右半屏无内容、标题栏在 (0,0)。
+  - **动画**：Snap/还原平滑移动（帧插值 ease-out，每帧 0.12 推进；`tickAnimations`
+    由输出帧循环驱动；拖动开始即取消动画）。
+  - **圆角**：遵循 Win10 直角设计（窗口无圆角）；圆角用于 UI 元素——开始菜单磁贴
+    等 Qt 侧已有 2px `border-radius`（`src/shell/startmenu/tilebutton.cpp`）。
+- **M7 续审查修复**（子代理审查 2 严重 + 8 中等 + 若干轻微）：remap 到非当前工作区
+  的窗口不再获得焦点/激活/置顶（焦点泄漏到隐藏窗口）；跨类型焦点统一（xdg 获焦时
+  XWayland 窗口同步失活、反之亦然，`focusSurface/focusView/unfocusAll` 全路径）；
+  `focusWorkspaceTop` 考虑 XView、不重排全局 z 序；`moveXViewToWorkspace` 清理
+  焦点/激活残留；任务栏激活跨工作区窗口先切换桌面；XView map 置顶。
+- **M8 审查修复**（子代理审查 2 严重 + 3 中等 + 若干轻微）：snap→最大化 时保留
+  restore 几何并取消动画（原实现 unsnap 启动返回动画且消费恢复点，导致最大化
+  窗口被拉回/还原尺寸错误）；maximized→snap 时恢复尺寸竞态（异步 resize 未 ack
+  前 width() 是最大化值，改为拷出恢复目标再落回）；XWayland override-redirect
+  中途切换后装饰节点指针全量置 null（shadowNode_ 悬垂导致 commit 时 UAF）；
+  `beginResize` 补 cancelAnimation；快捷键仅纯 LOGO 组合（排除 Shift/Ctrl/Alt）；
+  多输出下动画仅第一输出推进（速度不翻倍）；unmap/dissociate 取消动画；
+  shadow.cpp 用 W10DE_CONTAINER_OF + nothrow 分配。全部修复后回归验证通过。
 
 ### 已知待验证项（编译时确认）
 

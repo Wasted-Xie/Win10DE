@@ -171,6 +171,8 @@ void Seat::beginMove(View* view) {
     endInteractive();
     dragMode_ = DragMode::Move;
     dragView_ = view;
+    // M8：用户拖动开始即取消布局动画（避免与插值竞态）。
+    view->cancelAnimation();
     grabX_ = cursor_->x;
     grabY_ = cursor_->y;
     grabGeomX_ = view->x();
@@ -185,6 +187,8 @@ void Seat::beginResize(View* view, uint32_t edges) {
     endInteractive();
     dragMode_ = DragMode::Resize;
     dragView_ = view;
+    // M8：用户 resize 开始即取消布局动画（与 move 路径一致，审查 M1）。
+    view->cancelAnimation();
     resizeEdges_ = edges;
     grabX_ = cursor_->x;
     grabY_ = cursor_->y;
@@ -195,13 +199,34 @@ void Seat::beginResize(View* view, uint32_t edges) {
     wlr_log(WLR_DEBUG, "begin resize view edges=0x%x", edges);
 }
 
+// M7 续：XWayland 窗口标题栏拖动（SSD；无 Resize 边缘支持）。
+void Seat::beginMoveXView(XView* view) {
+    if (!view->mapped()) {
+        return;
+    }
+    endInteractive();
+    dragMode_ = DragMode::Move;
+    dragXView_ = view;
+    // M8：用户拖动开始即取消布局动画（避免与插值竞态）。
+    view->cancelAnimation();
+    grabX_ = cursor_->x;
+    grabY_ = cursor_->y;
+    grabGeomX_ = view->x();
+    grabGeomY_ = view->y();
+    wlr_log(WLR_DEBUG, "begin move xview at (%d,%d)", grabGeomX_, grabGeomY_);
+}
+
 void Seat::endInteractive() {
     if (dragMode_ == DragMode::None) {
         return;
     }
     dragMode_ = DragMode::None;
     dragView_ = nullptr;
+    dragXView_ = nullptr;
     wlr_log(WLR_DEBUG, "end interactive operation");
+    // 拖动期间 processCursorMotion 提前返回不刷 hover；结束后立即重算，
+    // 使高亮与真实光标位置一致（审查 #8）。
+    updateHover();
 }
 
 // ---- 焦点 ----
@@ -222,6 +247,10 @@ void Seat::focusView(View* view) {
     for (View* v : compositor_.views()) {
         v->setActivated(v == view);
     }
+    // 审查 #2：XWayland 窗口同步失活（跨类型焦点唯一）。
+    for (XView* xv : compositor_.xviews()) {
+        xv->activate(false);
+    }
 }
 
 void Seat::focusSurface(wlr_surface* surface, bool deactivateViews) {
@@ -235,6 +264,10 @@ void Seat::focusSurface(wlr_surface* surface, bool deactivateViews) {
         // 层表面（如开始菜单）获得输入时所有窗口失活。
         for (View* v : compositor_.views()) {
             v->setActivated(false);
+        }
+        // 审查 #2：XWayland 窗口同步失活。
+        for (XView* xv : compositor_.xviews()) {
+            xv->activate(false);
         }
     }
 }
@@ -258,6 +291,13 @@ void Seat::unfocusAll() {
     wlr_seat_keyboard_notify_clear_focus(seat_);
     wlr_seat_pointer_notify_clear_focus(seat_);
     endInteractive();
+    // 审查 #2：全部窗口（xdg + XWayland）失活，保证焦点/激活唯一。
+    for (View* v : compositor_.views()) {
+        v->setActivated(false);
+    }
+    for (XView* xv : compositor_.xviews()) {
+        xv->activate(false);
+    }
 }
 
 void Seat::onViewDestroyed(View* view) {
@@ -265,7 +305,20 @@ void Seat::onViewDestroyed(View* view) {
     if (dragView_ == view) {
         endInteractive();
     }
+    if (hoverView_ == view) {
+        hoverView_ = nullptr;
+    }
     unfocusView(view);
+}
+
+// M7 续：XWayland 视图销毁时清理引用。
+void Seat::onXViewDestroyed(XView* view) {
+    if (dragXView_ == view) {
+        endInteractive();
+    }
+    if (hoverXView_ == view) {
+        hoverXView_ = nullptr;
+    }
 }
 
 // ---- 命中检测 ----
@@ -274,7 +327,9 @@ View* Seat::viewAt(double lx, double ly) const {
     const auto& views = compositor_.views();
     for (auto it = views.rbegin(); it != views.rend(); ++it) {
         View* view = *it;
-        if (view->mapped() && view->contains(lx, ly)) {
+        // 仅命中当前工作区的可见窗口（M7 续：多工作区）。
+        if (view->mapped() && view->workspace() == compositor_.currentWorkspace() &&
+                view->contains(lx, ly)) {
             return view;
         }
     }
@@ -324,10 +379,19 @@ wlr_surface* Seat::surfaceAt(double lx, double ly, double* sx, double* sy,
     // 1.5 XWayland 窗口（MVP：与 xdg 窗口同层，命中顺序在 xdg 之前）。
     for (auto it = compositor_.xviews().rbegin(); it != compositor_.xviews().rend(); ++it) {
         XView* xview = *it;
-        if (xview->mapped() && xview->surface() != nullptr &&
-                xview->contains(lx, ly)) {
+        // 仅当前工作区的可见窗口（M7 续：多工作区）。
+        if (xview->mapped() && xview->workspace() == compositor_.currentWorkspace() &&
+                xview->surface() != nullptr && xview->contains(lx, ly)) {
+            // 装饰区（标题栏）不由内容命中：仅内容区返回 surface
+            //（SSD，M7 续；装饰区由调用方处理按钮/拖动）。
+            if (xview->decorationAt(lx, ly) != DecorationArea::None) {
+                if (hitLayer != nullptr) {
+                    *hitLayer = nullptr;
+                }
+                return nullptr;
+            }
             *sx = lx - xview->x();
-            *sy = ly - xview->y();
+            *sy = ly - xview->y() - View::kTitleBarHeight;
             if (hitLayer != nullptr) {
                 *hitLayer = nullptr;
             }
@@ -336,14 +400,23 @@ wlr_surface* Seat::surfaceAt(double lx, double ly, double* sx, double* sy,
     }
     // 2. 窗口（内容区；装饰区由调用方另行判断）。
     View* view = viewAt(lx, ly);
-    if (view != nullptr && view->toplevel()->base->surface != nullptr &&
-            view->decorationAt(lx, ly) == DecorationArea::None) {
-        *sx = lx - view->x();
-        *sy = ly - view->y() - View::kTitleBarHeight;
+    if (view != nullptr) {
+        if (view->toplevel()->base->surface != nullptr &&
+                view->decorationAt(lx, ly) == DecorationArea::None) {
+            *sx = lx - view->x();
+            *sy = ly - view->y() - View::kTitleBarHeight;
+            if (hitLayer != nullptr) {
+                *hitLayer = nullptr;
+            }
+            return view->toplevel()->base->surface;
+        }
+        // 装饰区（标题栏/按钮）：不向窗口之下的层 fallthrough ——
+        // 标题栏上的滚轮/右键不得落到桌面/壁纸层（M2a 既有缺陷修正）；
+        // 返回 null，由调用方处理（左键按钮/拖动，其余清指针焦点）。
         if (hitLayer != nullptr) {
             *hitLayer = nullptr;
         }
-        return view->toplevel()->base->surface;
+        return nullptr;
     }
     // 3. 窗口之下的层（bottom/background）。
     if (wlr_surface* s = checkLayer(ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM); s != nullptr) {
@@ -444,6 +517,14 @@ void Seat::processCursorMotion(uint32_t timeMsec) {
         // 拖动中不更新指针 focus（保持在发起拖动的视图上）。
         return;
     }
+    // M7 续：XWayland 窗口拖动（Move 模式）。
+    if (dragMode_ != DragMode::None && dragXView_ != nullptr) {
+        const double dx = cursor_->x - grabX_;
+        const double dy = cursor_->y - grabY_;
+        dragXView_->moveTo(grabGeomX_ + static_cast<int>(dx),
+                           grabGeomY_ + static_cast<int>(dy));
+        return;
+    }
 
     // 统一命中检测（层表面 + 窗口），按 z 序返回实际 surface。
     LayerSurface* hitLayer = nullptr;
@@ -456,8 +537,75 @@ void Seat::processCursorMotion(uint32_t timeMsec) {
         // 未命中任何可输入表面（含窗口装饰区）：清除指针焦点。
         wlr_seat_pointer_notify_clear_focus(seat_);
     }
+    // M2b hover 打磨：跟踪窗口装饰按钮的悬停（高亮反馈）。
+    updateHover();
     // 注意：frame 事件统一由 wlr_cursor 的 frame 事件（handleCursorFrame）
     // 发送，此处不再单独发送，避免每批事件出现两个 frame。
+}
+
+void Seat::updateHover() {
+    // 命中最上层窗口的装饰区；非按钮区域（标题栏空白/内容区）清除高亮。
+    // overlay/top 层表面（开始菜单等）遮挡窗口时不高亮被盖住的按钮：
+    // 视觉反馈与实际输入（surfaceAt 中 overlay/top 优先）保持一致。
+    bool occluded = false;
+    double sx = 0, sy = 0;
+    LayerSurface* hitLayer = nullptr;
+    if (wlr_surface* s = surfaceAt(cursor_->x, cursor_->y, &sx, &sy, &hitLayer);
+            s != nullptr && hitLayer != nullptr) {
+        const int layerNum = static_cast<int>(hitLayer->layer()->current.layer);
+        if (layerNum == ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY ||
+                layerNum == ZWLR_LAYER_SHELL_V1_LAYER_TOP) {
+            occluded = true;
+        }
+    }
+    // xdg 窗口与 XWayland 窗口（M7 续）取命中的一方。
+    View* view = occluded ? nullptr : viewAt(cursor_->x, cursor_->y);
+    XView* xview = nullptr;
+    if (view == nullptr && !occluded) {
+        for (auto it = compositor_.xviews().rbegin();
+                it != compositor_.xviews().rend(); ++it) {
+            XView* xv = *it;
+            if (xv->mapped() && xv->workspace() == compositor_.currentWorkspace() &&
+                    xv->contains(cursor_->x, cursor_->y)) {
+                xview = xv;
+                break;
+            }
+        }
+    }
+    DecorationArea area = DecorationArea::None;
+    if (view != nullptr && view->mapped()) {
+        area = view->decorationAt(cursor_->x, cursor_->y);
+    } else if (xview != nullptr) {
+        area = xview->decorationAt(cursor_->x, cursor_->y);
+    }
+    if (area != DecorationArea::MinButton &&
+            area != DecorationArea::MaxButton &&
+            area != DecorationArea::CloseButton) {
+        area = DecorationArea::None;  // 仅按钮有 hover 视觉
+    }
+    // 目标窗口变化或 hover 区域变化时刷新视觉。
+    const bool targetChanged = hoverView_ != view || hoverXView_ != xview;
+    if (targetChanged || (hoverView_ != nullptr && hoverView_->hoverArea() != area) ||
+            (hoverXView_ != nullptr && hoverXView_->hoverArea() != area)) {
+        if (hoverView_ != nullptr && hoverView_ != view) {
+            hoverView_->setHoverArea(DecorationArea::None);
+        }
+        if (hoverXView_ != nullptr && hoverXView_ != xview) {
+            hoverXView_->setHoverArea(DecorationArea::None);
+        }
+        hoverView_ = view;
+        hoverXView_ = xview;
+        if (view != nullptr) {
+            view->setHoverArea(area);
+        }
+        if (xview != nullptr) {
+            xview->setHoverArea(area);
+        }
+    } else if (view != nullptr) {
+        view->setHoverArea(area);
+    } else if (xview != nullptr) {
+        xview->setHoverArea(area);
+    }
 }
 
 void Seat::processCursorButton(uint32_t timeMsec, uint32_t button,
@@ -520,6 +668,39 @@ void Seat::processCursorButton(uint32_t timeMsec, uint32_t button,
                     break;  // 不可达（已判 != None）
                 }
             }
+            // M7 续：XWayland 窗口装饰区（SSD 同款按钮/拖动）。
+            XView* xhit = nullptr;
+            for (auto it = compositor_.xviews().rbegin();
+                    it != compositor_.xviews().rend(); ++it) {
+                XView* xv = *it;
+                if (xv->mapped() && xv->workspace() == compositor_.currentWorkspace() &&
+                        xv->contains(lx, ly)) {
+                    xhit = xv;
+                    break;
+                }
+            }
+            if (xhit != nullptr && xhit->decorationAt(lx, ly) != DecorationArea::None) {
+                xhit->activate(true);
+                compositor_.raiseXView(xhit);
+                switch (xhit->decorationAt(lx, ly)) {
+                case DecorationArea::CloseButton:
+                    wlr_log(WLR_INFO, "xview titlebar: close '%s'",
+                            xhit->title() ? xhit->title() : "");
+                    xhit->close();
+                    return;
+                case DecorationArea::MinButton:
+                    xhit->setMinimized(!xhit->minimized());
+                    return;
+                case DecorationArea::MaxButton:
+                    xhit->setMaximized(!xhit->maximized());
+                    return;
+                case DecorationArea::TitleBar:
+                    beginMoveXView(xhit);  // SSD 下标题栏按下直接拖动
+                    return;
+                case DecorationArea::None:
+                    break;
+                }
+            }
         }
 
         // 3. 窗口内容区 / XWayland / bottom / background 层表面。
@@ -533,9 +714,13 @@ void Seat::processCursorButton(uint32_t timeMsec, uint32_t button,
                 } else {
                     for (auto it = compositor_.xviews().rbegin();
                             it != compositor_.xviews().rend(); ++it) {
-                        if ((*it)->mapped() && (*it)->contains(lx, ly)) {
-                            focusSurface((*it)->surface(), true);
-                            compositor_.raiseXView(*it);
+                        XView* xv = *it;
+                        // 仅当前工作区 + 内容区（装饰区已在分支 2 处理）。
+                        if (xv->mapped() && xv->workspace() == compositor_.currentWorkspace() &&
+                                xv->contains(lx, ly) &&
+                                xv->decorationAt(lx, ly) == DecorationArea::None) {
+                            focusSurface(xv->surface(), true);
+                            compositor_.raiseXView(xv);
                             break;
                         }
                     }
@@ -622,34 +807,90 @@ void Seat::processKey(uint32_t timeMsec, uint32_t keycode, wl_keyboard_key_state
 
     if (state == WL_KEYBOARD_KEY_STATE_PRESSED) {
         // Win10 风格快捷键（Win = LOGO 修饰键）。
-        if (sym == XKB_KEY_q && (mods & WLR_MODIFIER_LOGO)) {
+        // 审查：仅纯 LOGO 组合（排除 Shift/Ctrl/Alt，避免 Win+Shift+← 等
+        // 未实现语义误触发）。
+        const bool pureLogo = (mods & WLR_MODIFIER_LOGO) &&
+            !(mods & (WLR_MODIFIER_SHIFT | WLR_MODIFIER_CTRL | WLR_MODIFIER_ALT));
+        if (sym == XKB_KEY_q && pureLogo) {
             if (focusedView_ != nullptr) {
                 wlr_log(WLR_INFO, "shortcut: close focused view");
                 focusedView_->close();
             }
             return;  // 快捷键不转发给客户端
         }
-        if (sym == XKB_KEY_Escape && (mods & WLR_MODIFIER_LOGO)) {
+        if (sym == XKB_KEY_Escape && pureLogo) {
             wlr_log(WLR_INFO, "shortcut: quit compositor");
             wl_display_terminate(compositor_.display());
             return;
         }
-        if (sym == XKB_KEY_f && (mods & WLR_MODIFIER_LOGO)) {
+        if (sym == XKB_KEY_f && pureLogo) {
             if (focusedView_ != nullptr) {
                 focusedView_->setMaximized(!focusedView_->maximized());
             }
             return;
         }
-        if (sym == XKB_KEY_m && (mods & WLR_MODIFIER_LOGO)) {
+        // M8 Aero Snap：Win+←/→ 左/右半屏，Win+↑ 最大化，Win+↓ 还原。
+        if (sym == XKB_KEY_Left && pureLogo) {
+            if (focusedView_ != nullptr) {
+                // 已在左半屏时再按则还原（Win10 行为：半屏 ↔ 浮动）。
+                if (focusedView_->snapEdge() == SnapEdge::Left) {
+                    focusedView_->unsnap();
+                } else {
+                    focusedView_->snapTo(SnapEdge::Left);
+                }
+            }
+            return;
+        }
+        if (sym == XKB_KEY_Right && pureLogo) {
+            if (focusedView_ != nullptr) {
+                if (focusedView_->snapEdge() == SnapEdge::Right) {
+                    focusedView_->unsnap();
+                } else {
+                    focusedView_->snapTo(SnapEdge::Right);
+                }
+            }
+            return;
+        }
+        if (sym == XKB_KEY_Up && pureLogo) {
+            if (focusedView_ != nullptr) {
+                focusedView_->setMaximized(true);
+            }
+            return;
+        }
+        if (sym == XKB_KEY_Down && pureLogo) {
+            if (focusedView_ != nullptr) {
+                // 最大化 → 还原；贴边 → 还原（Win10 Win+↓ 语义）。
+                if (focusedView_->isFullAreaLayout()) {
+                    if (focusedView_->maximized()) {
+                        focusedView_->setMaximized(false);
+                    } else {
+                        focusedView_->unsnap();
+                    }
+                }
+            }
+            return;
+        }
+        if (sym == XKB_KEY_m && pureLogo) {
             if (focusedView_ != nullptr) {
                 focusedView_->setMinimized(!focusedView_->minimized());
             }
             return;
         }
-        if (sym == XKB_KEY_l && (mods & WLR_MODIFIER_LOGO)) {
+        if (sym == XKB_KEY_l && pureLogo) {
             wlr_log(WLR_INFO, "shortcut: lock screen (Win+L)");
             compositor_.launchLockScreen();
             return;
+        }
+        // M7 续：Win+1..4 切换工作区（对应 kWorkspaceCount 个虚拟桌面）。
+        static const struct { xkb_keysym_t sym; int ws; } kWorkspaceKeys[] = {
+            {XKB_KEY_1, 0}, {XKB_KEY_2, 1}, {XKB_KEY_3, 2}, {XKB_KEY_4, 3},
+        };
+        for (const auto& wk : kWorkspaceKeys) {
+            if (sym == wk.sym && pureLogo) {
+                wlr_log(WLR_INFO, "shortcut: switch to workspace %d", wk.ws);
+                compositor_.switchWorkspace(wk.ws);
+                return;
+            }
         }
     }
 

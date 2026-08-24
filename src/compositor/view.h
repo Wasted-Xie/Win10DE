@@ -15,6 +15,9 @@ extern "C" {
 }  // extern "C" (wlroots)
 }
 
+#include "compositor/shadow.h"
+#include "compositor/titletext.h"
+
 namespace w10de {
 
 class Compositor;
@@ -27,6 +30,13 @@ enum class DecorationArea {
     MinButton,     // 最小化按钮
     MaxButton,     // 最大化/还原按钮
     CloseButton,   // 关闭按钮
+};
+
+// Aero Snap 贴边方向（M8：Win+←/→ 半屏）。
+enum class SnapEdge {
+    None,   // 未贴边（浮动）
+    Left,   // 左半屏
+    Right,  // 右半屏
 };
 
 class View {
@@ -64,6 +74,11 @@ public:
     // 装饰区域命中检测（lx, ly 为布局坐标）。标题栏在内容区上方。
     DecorationArea decorationAt(double lx, double ly) const;
 
+    // M2b hover 打磨：设置当前悬停的装饰区域（Seat 调用），
+    // 变化时刷新按钮视觉（背景高亮）。
+    void setHoverArea(DecorationArea area);
+    DecorationArea hoverArea() const { return hoverArea_; }
+
     // ---- 窗口操作（由 Seat / 未来任务栏调用）----
     void setActivated(bool activated);
     void close();      // 请求客户端关闭
@@ -73,6 +88,32 @@ public:
     bool minimized() const { return minimized_; }
     void moveTo(int x, int y);
     void resize(int width, int height);  // 请求新尺寸（客户端可能拒绝）
+
+    // ---- Aero Snap（M8：Win+←/→ 半屏）----
+    // 贴边到左/右半屏（保存恢复几何；最大化状态先取消）。
+    void snapTo(SnapEdge edge);
+    // 取消贴边：恢复 snap 前几何（Win+↓ 还原）。
+    void unsnap();
+    SnapEdge snapEdge() const { return snapEdge_; }
+    // 当前是否处于"占用整可用区"的布局态（最大化或贴边，Win+↓ 需还原）。
+    bool isFullAreaLayout() const { return maximized_ || snapEdge_ != SnapEdge::None; }
+
+    // ---- M8 窗口动画（帧插值）----
+    // 平滑移动到 (x, y)（Snap/还原等布局操作用；拖动仍即时）。
+    void animateMoveTo(int x, int y);
+    // 推进动画一帧（Compositor 每帧调用）；完成时落在精确目标并停用。
+    void tickAnimation();
+    // 立即停止动画（拖动开始等场景，避免与用户操作竞态）。
+    void cancelAnimation();
+    bool animating() const { return animActive_; }
+
+    // ---- 多工作区（M7 续）----
+    // 所属工作区（0..kWorkspaceCount-1），新窗口归属创建时所在工作区。
+    int workspace() const { return workspace_; }
+    // 改变归属工作区（Compositor::moveViewToWorkspace 调用），刷新可见性。
+    void setWorkspace(int workspace);
+    // 按 工作区 + mapped + minimized 刷新 scene 节点显隐（M7 续）。
+    void applyVisibility();
 
 private:
     // ---- wlroots 事件回调 ----
@@ -91,6 +132,10 @@ private:
     // 创建/更新 SSD 标题栏装饰（宽度跟随内容几何）。
     void createDecoration();
     void updateDecoration();
+    // M2b：渲染标题文字（cairo/pango → scene buffer）。
+    void renderTitle();
+    // M8：渲染/更新窗口阴影（尺寸变化时重绘，位置跟随装饰树）。
+    void updateShadow();
     // 装饰在布局中的坐标（标题栏左上角）。
     int decorationX() const { return x_; }
     int decorationY() const { return y_; }
@@ -112,6 +157,17 @@ private:
     int x_ = 0, y_ = 0;
     bool maximized_ = false;
     bool minimized_ = false;
+    // Aero Snap 贴边状态（M8；None=浮动）。
+    SnapEdge snapEdge_ = SnapEdge::None;
+    // M8 动画状态（位置插值；动画期间用户拖动会取消）。
+    bool animActive_ = false;
+    double animFromX_ = 0, animFromY_ = 0;
+    double animToX_ = 0, animToY_ = 0;
+    float animT_ = 0.0f;
+    // M8 验证：map 后自动贴左半屏（--snap-test，每个窗口生效）。
+    bool snapOnMap_ = false;
+    // 所属工作区（M7 续）；新窗口在构造时取 compositor 当前工作区。
+    int workspace_ = 0;
     bool positionInitialized_ = false;  // 首次 map 已设初始位置（remap 不重置）
     bool hasRestoreGeometry_ = false;   // 是否保存了最大化前几何
     int restoreX_ = 0, restoreY_ = 0, restoreW_ = 0, restoreH_ = 0;
@@ -122,6 +178,14 @@ private:
     wlr_scene_rect* minButtonRect_ = nullptr;
     wlr_scene_rect* maxButtonRect_ = nullptr;
     wlr_scene_rect* closeButtonRect_ = nullptr;
+    // M2b 标题文字（scene buffer + cairo/pango 渲染）。
+    wlr_scene_buffer* titleTextNode_ = nullptr;
+    TitleTextBuffer* titleText_ = nullptr;  // 当前渲染的 buffer（owned）
+    // M8 窗口阴影（scene buffer + 自绘渐变；装饰树最底层子节点）。
+    wlr_scene_buffer* shadowNode_ = nullptr;
+    ShadowBuffer* shadow_ = nullptr;  // 当前阴影 buffer（owned）
+    // M2b hover 打磨：当前悬停的装饰区域。
+    DecorationArea hoverArea_ = DecorationArea::None;
 
     // ---- foreign-toplevel handle（任务栏协议）----
     wlr_foreign_toplevel_handle_v1* ftHandle_ = nullptr;
