@@ -18,8 +18,10 @@ add_executable(w10compositor
     dbus_service.cpp
     ${CMAKE_SOURCE_DIR}/src/ipc/config.cpp
     ${CMAKE_SOURCE_DIR}/src/ipc/inputsettings.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/nightlight.cpp
     ${CMAKE_SOURCE_DIR}/src/ipc/shortcuts.cpp
     ${CMAKE_SOURCE_DIR}/src/ipc/theme.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/windowrules.cpp
 )
 
 target_include_directories(w10compositor PRIVATE

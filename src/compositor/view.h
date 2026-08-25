@@ -71,6 +71,12 @@ public:
     const char* title() const { return toplevel_->title; }
     const char* appId() const { return toplevel_->app_id; }
 
+    // KDE-GAP 中优先 #6：map 时应用 [window_rules] 规则
+    //（workspace/geometry/always_on_top/borderless，首条命中生效）。
+    void applyRules();
+    bool borderless() const { return borderless_; }
+    bool alwaysOnTop() const { return alwaysOnTop_; }
+
     // 装饰区域命中检测（lx, ly 为布局坐标）。标题栏在内容区上方。
     DecorationArea decorationAt(double lx, double ly) const;
 
@@ -113,6 +119,9 @@ public:
     // 立即停止动画（拖动开始等场景，避免与用户操作竞态）。
     void cancelAnimation();
     bool animating() const { return animActive_; }
+    // ---- KWin 特效（低优先）----
+    // 打开淡入：map 时内容透明度 0→1（wlr_scene_buffer opacity）。
+    void startFadeIn();
 
     // ---- 多工作区（M7 续）----
     // 所属工作区（0..kWorkspaceCount-1），新窗口归属创建时所在工作区。
@@ -173,8 +182,15 @@ private:
     double animFromX_ = 0, animFromY_ = 0;
     double animToX_ = 0, animToY_ = 0;
     float animT_ = 0.0f;
+    // KWin 特效（低优先）：打开淡入状态（content buffer opacity 0→1）。
+    float fadeOpacity_ = 1.0f;
+    bool fadeActive_ = false;
+    struct wlr_scene_buffer* contentBuffer_ = nullptr;
     // M8 验证：map 后自动贴左半屏（--snap-test，每个窗口生效）。
     bool snapOnMap_ = false;
+    // 窗口规则标志（KDE-GAP 中优先 #6：applyRules 设置）。
+    bool alwaysOnTop_ = false;
+    bool borderless_ = false;
     // 所属工作区（M7 续）；新窗口在构造时取 compositor 当前工作区。
     int workspace_ = 0;
     bool positionInitialized_ = false;  // 首次 map 已设初始位置（remap 不重置）

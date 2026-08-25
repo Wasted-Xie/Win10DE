@@ -456,7 +456,52 @@ WLR_BACKEND=wayland ./build/src/compositor/w10compositor --frames 0
   M1-M7 全修复**：S1-1 symlink 递归删除目标内容（isSymLink 优先）、
   S1-2 恢复路径 cleanPath+isAbsolute 校验、M1 孤儿 info 误删、M2
   路径穿越、M3 排序、M4 消息覆盖、M5 无 D-Bus 降级、M6 selftest
-  回归、M7 moveToTrash 先 info 后文件回滚）→ 中优先剩余：每应用
-  音量、多显示器图形排列 GUI、窗口规则、桌面小部件。
+  回归、M7 moveToTrash 先 info 后文件回滚）→ **中优先 #4 每应用音量
+  ✅**（audioinfo 扩展：AppStreamInfo + sink-input 枚举/设置
+  （pa_context_get_sink_input_info_list / set_sink_input_volume/mute，
+  proplist 读取 application.name/media.name，PendingCmd 排队）；
+  w10settings"音频"页"应用音量"区（QTableWidget：应用/滑块/静音，
+  行→index 映射）；端到端验证 PASS：pulseaudio 服务 + paplay → pactl
+  确认流 → 渲染 A/B 有流 3 簇 vs 无流 2 簇；**审查 M1-M4 全修复**
+  （M1 TERMINATED 后 timer 泄漏、M2 通道数缓存、M3 音量读写 dB 对称
+  （Pulse 立方刻度 0x8000=-18dB）+ selftest、M4 Qt 滑块释放丢最终值
+  补 sliderReleased——三处滑块））→ **中优先 #5 多显示器图形排列 GUI
+  ✅**（compositor `--outputs N`（headless 多输出，wlr_headless_add_
+  output 循环）；w10settings 显示页"排列"区：自绘显示器矩形
+  （MonitorArrangementWidget：基准包围盒映射/拖拽 10px 网格/
+  positions）+ 应用排列（SetPosition 热应用）；D-Bus 端到端
+  （2 输出 GetOutputs/SetPosition 回读）+ 渲染 PASS（2 矩形像素
+  确认）；**审查 M1-M5 全修复**（changed_ 重置/部分失败信息/多输出
+  截图竞态仅首输出/逻辑尺寸换算 scale≠100/resizeEvent）；拖拽交互
+  真机项）→ **中优先 #6 窗口规则 ✅**（`src/ipc/windowrules.{h,cpp}`
+  [window_rules] 段：`<name> = <match>;<action|action...>`（app_id/
+  title * 通配；always_on_top/borderless/workspace/geometry；| 分隔
+  避 geometry 逗号冲突）；View::applyRules map 时首条命中（workspace/
+  几何/置顶 raise_to_top/无边框销毁装饰树）+ --windowrules-dump；
+  端到端 PASS（规则应用日志 + 窗口 at 规则位置 + 渲染确认）；**审查
+  M1-M5 全修复**（atoi 陷阱 strtol/段匹配对齐 Config/AND 双条件/
+  置顶持久化 raiseView 重提升+borderless decorationAt 防误触）；已知：
+  resize 客户端可拒绝）→ **中优先 #7 桌面小部件 ✅**
+  （`src/shell/desktop/desktopwidgets.{h,cpp}`：时钟（右上，1s）+ 系统
+  信息（左上，CPU/内存 /proc 增量，2s），[widgets] 段
+  show_clock/show_sysinfo，DesktopWindow 集成；A/B 渲染 PASS：
+  时钟区两态保持、系统信息区开 54 vs 关 0；**审查 M1-M3 全修复**
+  （CPU 8 字段 idle+iowait/时钟 timer 随可见性启停/基线移成员）；
+  已知简化：无拖放/自定义）——**中优先 7 项全部完成** → **低优先 #1
+  Night Light ✅**（`src/ipc/nightlight.{h,cpp}`：[night_light] 段
+  enabled/temperature/start/end（HH:MM 严格）；isNightActive 跨午夜；
+  Tanner Helland gamma 表；compositor applyNightLight（state API，
+  headless size==0 降级）+ 每分钟 timer + 新输出应用；--nightlight-test
+  采样 PASS（3500K 蓝 55%）；**审查 S1-S2/M1-M3 全修复**（热插拔
+  force/单点表 NaN/isdigit 校验/start==end 回退/commit 日志）+ L1
+  （禁用不建 timer）；已知：无自动日落/渐变，gamma 需真机）
+  → **低优先 #2 KWin 特效（打开淡入）✅**（View::startFadeIn：map 时
+  嵌套 surface_tree 下探找内容 buffer + set_opacity 0→1，tickAnimation
+  每帧 +0.15；渲染逐帧 PASS：f71 半透明 #095da0→f77 不透明 #1e1e1e；
+  自查无 S/M（指针生命周期/remap/与移动动画并发/降级均安全）；
+  已知：仅内容淡入、remap 重复淡入）+ **还原淡入**（setMinimized(false)
+  复用 startFadeIn；真机验证项）——**低优先完成**（Night Light + KWin
+  淡入/还原 ✅；全局菜单/KWallet/登录管理器/KWin 其余特效经评估 MVP
+  不做，理由见 docs/UNFIXED.md）——**KDE-GAP 差距清单可做项全部完成**
 - **不要**重新核对已确认的 API（见第 4 节决策表与源码注释中的"已确认"标注）；新增 wlr_* 调用时对照 `third_party/wlroots/include/`。
 - **维护规则（用户明确要求）**：**每次完成任务/里程碑时，更新 `README.md` 的同时必须同步更新本文档**（状态表、文件清单、决策、已知问题、下一步）。本文档不是一次性的——它随项目演进持续维护，任何"进行中"状态必须在每次交接时准确反映。若 README 有变更而本文档未同步，视为交接不完整。

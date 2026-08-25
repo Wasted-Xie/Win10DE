@@ -223,7 +223,111 @@ Linux 上的 Windows 10 风格桌面环境，从零实现。
         无 D-Bus 静默退出——降级运行；M6 selftest 补 symlink/相对
         Path/孤儿断言；M7 moveToTrash 先落 info 再移文件失败回滚
         （w10explorer 互操作））+ L 系（上限 100000/恢复按钮禁用/
-        幂等清理等）
+        幂等清理等））→ **中优先 #4 每应用音量 ✅**（`audioinfo.{h,cpp}`
+        扩展：`AppStreamInfo`（index/name/application/volumePercent/
+        muted）+ sink-input 枚举（pa_context_get_sink_input_info_list，
+        media.name/application.name proplist 读取）+ setAppVolume/
+        setAppMuted（pa_context_set_sink_input_volume/mute，0%→MUTED，
+        -20..0dB 映射与全局一致；PendingCmd 扩展支持连接就绪前排队）；
+        w10settings"音频"页加"应用音量"区：QTableWidget 3 列（应用/
+        音量滑块/静音复选框，setCellWidget，行→sink-input index 映射，
+        滑块非拖动中写）+ 状态文字（无活动应用/不可用）；验证：编译 +
+        selftest 回归 + **端到端 PASS**（WSL 装 pulseaudio 服务 + null
+        sink + paplay 播放 → pactl 确认 sink-input → 渲染 A/B：有流 3
+        个文字行簇 vs 无流 2 个，应用行出现）；**子代理审查 M1-M4
+        全修复**（M1 连接 TERMINATED 后驱动 timer 永不停止（20ms 空转
+        泄漏）——状态回调复位挂起 + timer 条件补 TERMINATED；M2
+        单通道 pa_cvolume_set 依赖 remap——缓存 sink-input 通道数按
+        实际设置；M3 音量读写映射不对称（写 dB 指数读线性致刷新回跳）
+        ——读侧改 dB 对称（Pulse 立方刻度探针实测 0x8000=-18dB）
+        + selftest 更新；M4 **Qt 滑块拖动释放不重发 valueChanged 丢
+        最终值**——应用/全局音量/亮度三处滑块补 sliderReleased）+ L
+        系（连接失败清行映射）；UI 交互（滑块拖动→音量变化）为真机
+        验证项）→ **中优先 #5 多显示器图形排列 GUI ✅**（compositor
+        新增 `--outputs N`（1-8）：headless 后端循环 `wlr_headless_add_
+        output` 创建多输出（layout add_auto 自动排列，多输出验证能力）；
+        w10settings"显示"页加"排列"区：`MonitorArrangementWidget` 自绘
+        显示器矩形（基准包围盒映射：setOutputs 固定缩放/偏移，拖拽不
+        重算避免跳变；名称/分辨率文字；命中+拖拽移动 10px 网格对齐；
+        positions/hasChanges）+ "应用排列"按钮（遍历 SetPosition 热
+        应用）；验证：D-Bus 端到端（--outputs 2 → GetOutputs 2 输出
+        (0,0/1920,0) → SetPosition (2000,100) → 回读确认）+ 渲染
+        （排列区深底 9744/边框 1138/填充 14828/文字 705 像素，2 矩
+        形）；拖拽交互为真机验证项；**子代理审查 M1-M5 全修复**（M1
+        setOutputs 未重置 changed_（应用后误报"未变化"）；M2 部分失败
+        丢弃 errMsg——显示 N/M + 失败原因；M3 多输出截图竞态（每输出
+        独立计帧双写同一路径 + 重复 terminate）——仅首输出截图终止；
+        M4 GetOutputs 物理尺寸与逻辑坐标混用致 scale≠100 矩形失真——
+        客户端换算逻辑尺寸；M5 无 resizeEvent（窗口拉伸排列不缩放）
+        ——补 rebuildBase）+ L 系（<algorithm> 显式 include 等））→
+        **中优先 #6 窗口规则 ✅**（`src/ipc/windowrules.{h,cpp}`：
+        [window_rules] 配置段——`<name> = <match>;<action[|action...]>`
+        （match: app_id=/title= * 通配子串；action: always_on_top/
+        borderless/workspace=0-3/geometry=x,y,w,h；| 分隔 action 避免
+        与 geometry 逗号冲突；非法行跳过记 stderr）；compositor 启动
+        加载（server windowRules_）+ View::applyRules（map 时首条命中：
+        workspace 归属/规则几何（moveTo+resize，positionInitialized_
+        不再层叠）/置顶（wlr_scene_node_raise_to_top）/无边框（销毁
+        装饰树，装饰函数 null 防护）；`--windowrules-dump` headless
+        解析验证（多 action/通配/geometry/非法跳过）；端到端 PASS：
+        规则加载日志 → w10calc map 规则应用 → 窗口映射 at (300,200)
+        规则位置 → 渲染像素确认（规则几何区域 17878 非壁纸像素）；
+        已知简化：resize 为请求（客户端可拒绝——w10calc 固定尺寸，
+        位置生效）；**子代理审查 M1-M5 全修复**（M1 workspace= atoi
+        静默接受非法值（"abc"→0）——strtol 严格校验拒绝；M2
+        [window_rules] 段匹配与 Config 不一致（尾空格/中括号空格致
+        规则静默全丢）——trim+find(']') 对齐；M3 match 仅单条件——
+        支持 app_id&title AND 组合；M4 置顶不持久（新窗口 map/点击
+        后失效）+ 装饰树未跟随——raiseView 重提升置顶窗口 +
+        decoration place_above；M5 borderless 后 decorationAt 仍返回
+        按钮区（无按钮可点却触发关闭）——borderless 仅保留拖动区）
+        + L 系（strtol 头文件、dump 几何输出逗号））→ **中优先 #7
+        桌面小部件 ✅**（`src/shell/desktop/desktopwidgets.{h,cpp}`：
+        对标 Plasma 桌面部件的轻量 MVP——时钟（桌面右上：白色大时间
+        + 小日期，深色半透明底，QTimer 1s）+ 系统信息（桌面左上：
+        CPU/内存占用，/proc/stat 增量 + /proc/meminfo，QTimer 2s）；
+        `[widgets]` 配置段（show_clock=1 默认/show_sysinfo=0）；
+        DesktopWindow 集成（构造创建 + resizeEvent reposition）；
+        A/B 渲染验证 PASS：clock+sysinfo 开 → 时钟区深底 932/白字
+        129 + 系统信息区白字 54；sysinfo 关 → 时钟保持、系统信息区 0
+        （配置开关生效）；**子代理审查 M1-M3 全修复**（M1 CPU 公式缺
+        字段——iowait 计为忙、分母缺 irq/softirq/steal 致 I/O 负载虚
+        高——补全 8 字段 idle+iowait 计空闲；M2 时钟 timer 不随可见性
+        启停（show_clock=0 仍每秒空转）——构造按配置 + setClockVisible
+        启停；M3 CPU 基线函数级 static 多实例互污染——移入成员
+        CpuBaseline）+ L 系（日期固定格式/Q_ASSERT/删未用 include）；
+        已知简化：无拖放/自定义（Plasma 完整部件框架不在 MVP））
+        ——**中优先 7 项全部完成**；**低优先 #1 Night Light ✅**
+        （`src/ipc/nightlight.{h,cpp}`：对标 KDE Night Color 精简版——
+        [night_light] 配置段（enabled/temperature 1000-8000/
+        start_time/end_time HH:MM 严格校验）；isNightActive 跨午夜
+        时间窗；Tanner Helland 色温→RGB 增益生成 16-bit gamma 表；
+        compositor applyNightLight（wlr_output_state_set_gamma_lut +
+        commit，headless size==0 优雅降级，active 无变化跳过）+
+        每分钟 wl_event_loop timer 检查切换 + 新输出热插拔应用 +
+        析构清理；`--nightlight-test <temp>` gamma 算法验证 PASS
+        （3500K 蓝通道衰减至 55% r满/g=49481/b=36192、6500K 近白
+        平衡）；headless 启动日志 on/off 时间窗生效；**子代理审查
+        S1-S2/M1-M3 全修复**（S1 热插拔新输出被去重短路拿不到 gamma——
+        applyNightLight(force) 强制；S2 size==1 除零 NaN→UB 黑屏——
+        单点表取满增益；M1 parseTime atoi 宽容（"1x:3y"）——isdigit
+        逐字符；M2 start==end 恒真全天开启——回退默认；M3 gamma
+        commit 失败静默——记日志）+ L1（禁用时不建每分钟 timer）；
+        已知简化：无自动日落（需位置/太阳计算）与渐变过渡，gamma
+        像素效果需真机 DRM 验证）→ **低优先 #2 KWin 特效（首个：窗口
+        打开淡入）✅**（View::startFadeIn——map 时定位 xdg 内容 buffer
+        （sceneTree_ 嵌套 surface_tree 下探一层找 WLR_SCENE_NODE_BUFFER）
+        + `wlr_scene_buffer_set_opacity` 0→1（tickAnimation 每帧 +0.15，
+        独立于移动动画）；渲染逐帧验证 PASS：f71 半透明 #095da0 →
+        f77 不透明 #1e1e1e（壁纸蓝透出渐变）+ 完成态不透明；**还原
+        淡入**（最小化是节点 enabled=false 不触发 map——setMinimized
+        (false) 复用 startFadeIn，真机任务栏还原验证项）；已知：
+        仅内容淡入（标题栏/阴影不淡入），remap/还原会再次淡入——
+        KWin 有窗口级动画框架，此处为最小实现）——**低优先完成**
+        （Night Light + KWin 打开/还原淡入 ✅；全局菜单/KWallet/
+        登录管理器/KWin 其余特效经评估为 MVP 不做——依赖客户端
+        DBusMenu/无消费方/系统层超范围/脚本框架工程量，理由见
+        docs/UNFIXED.md）——**KDE-GAP 差距清单可做项全部完成**
 - [x] 编译与冒烟验证（headless 运行 + 截图 + 像素校验，2026-08 Arch/WSL2 通过）
 - [x] 完整渲染验证（compositor + w10shell 同跑：桌面壁纸渐变 + 任务栏渲染成功，2026-08）
 - [ ] 真机/嵌套环境验证（DRM、XWayland 运行时、鼠标键盘实际交互）

@@ -25,6 +25,7 @@ void printUsage(const char* prog) {
         "Options:\n"
         "  --width <px>        headless 输出宽度（默认 1920）\n"
         "  --height <px>       headless 输出高度（默认 1080）\n"
+        "  --outputs <n>       headless 输出数量 1-8（默认 1；多显示器排列验证）\n"
         "  --frames <n>        渲染 n 帧后退出，0 表示无限运行（默认 0；headless 冒烟用）\n"
         "  --screenshot <path> 退出前将输出保存为 PNG 并验证中心像素（默认不保存）\n"
         "  --socket <name>     固定 Wayland socket 名（会话启动用；默认自动生成）\n"
@@ -36,6 +37,8 @@ void printUsage(const char* prog) {
         "  --snaplayout-test <f> 渲染到第 f 帧时显示 Snap 布局选择器（headless 验证）\n"
         "  --clipboard-test <f> 渲染到第 f 帧时触发剪贴板历史面板（Win+V，headless 验证）\n"
         "  --shortcuts-dump    打印 [shortcuts] 配置生效的快捷键绑定后退出（验证用）\n"
+        "  --windowrules-dump  打印 [window_rules] 解析结果后退出（验证用）\n"
+        "  --nightlight-test <t> 打印 <t>K 色温 gamma 表采样后退出（验证用）\n"
         "  --verbose           输出调试日志\n"
         "  --help              显示本帮助\n"
         "环境变量：\n"
@@ -70,6 +73,13 @@ int main(int argc, char* argv[]) {
             opts.width = parseInt("--width");
         } else if (arg == "--height") {
             opts.height = parseInt("--height");
+        } else if (arg == "--outputs") {
+            opts.outputs = parseInt("--outputs");
+            if (opts.outputs < 1 || opts.outputs > 8) {
+                std::fprintf(stderr, "invalid --outputs: %d (must be 1-8)\n",
+                             opts.outputs);
+                return 1;
+            }
         } else if (arg == "--frames") {
             opts.frames = parseInt("--frames");
         } else if (arg == "--screenshot") {
@@ -140,6 +150,14 @@ int main(int argc, char* argv[]) {
             opts.snaplayoutTestFrame = parseInt("--snaplayout-test");
         } else if (arg == "--shortcuts-dump") {
             opts.shortcutsDump = true;
+        } else if (arg == "--windowrules-dump") {
+            opts.windowRulesDump = true;
+        } else if (arg == "--nightlight-test") {
+            if (i + 1 >= argc) {
+                std::fprintf(stderr, "option --nightlight-test requires an argument\n");
+                return 1;
+            }
+            opts.nightlightTestTemp = parseInt("--nightlight-test");
         } else if (arg == "--help") {
             printUsage(argv[0]);
             return 0;
@@ -207,6 +225,45 @@ int main(int argc, char* argv[]) {
                         w10de::shortcutActionName(static_cast<w10de::ShortcutAction>(a)),
                         b.mods, b.sym, b.valid() ? "" : " (invalid)");
         }
+        return 0;
+    }
+
+    // --windowrules-dump：打印 [window_rules] 段解析结果后退出（KDE-GAP
+    // 中优先 #6：headless 验证规则解析，不启动后端）。
+    if (opts.windowRulesDump) {
+        const auto rules = w10de::ipc::loadWindowRules(opts.configPath);
+        for (const auto& r : rules) {
+            std::printf("match(app_id='%s' title='%s') -> "
+                        "ontop=%d borderless=%d ws=%d geom=%s\n",
+                        r.matchAppId.c_str(), r.matchTitle.c_str(),
+                        r.alwaysOnTop ? 1 : 0, r.borderless ? 1 : 0,
+                        r.workspace,
+                        r.hasGeometry
+                            ? (std::to_string(r.geomX) + "," +
+                               std::to_string(r.geomY) + "," +
+                               std::to_string(r.geomW) + "," +
+                               std::to_string(r.geomH)).c_str()
+                            : "-");
+        }
+        return 0;
+    }
+
+    // --nightlight-test <temp>：打印指定色温的 gamma 表采样（headless 无
+    // gamma 硬件，用算法单测替代像素验证；低优先 Night Light）。
+    if (opts.nightlightTestTemp > 0) {
+        constexpr size_t kSize = 256;
+        std::vector<uint16_t> r(kSize), g(kSize), b(kSize);
+        if (!w10de::ipc::buildGammaRamps(opts.nightlightTestTemp, kSize,
+                                         r.data(), g.data(), b.data())) {
+            std::fprintf(stderr, "invalid temperature\n");
+            return 1;
+        }
+        std::printf("gamma %dK: r[0,128,255]=%u,%u,%u "
+                    "g=%u,%u,%u b=%u,%u,%u\n",
+                    opts.nightlightTestTemp,
+                    r[0], r[128], r[255],
+                    g[0], g[128], g[255],
+                    b[0], b[128], b[255]);
         return 0;
     }
 

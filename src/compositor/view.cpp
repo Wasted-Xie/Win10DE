@@ -143,6 +143,11 @@ DecorationArea View::decorationAt(double lx, double ly) const {
     if (dy < 0 || dy >= kTitleBarHeight || dx < 0 || dx >= width()) {
         return DecorationArea::None;
     }
+    // 审查 M5（窗口规则）：borderless 无按钮——仅保留拖动区，
+    // 避免点击无视觉按钮的位置触发关闭等破坏性动作。
+    if (borderless_) {
+        return DecorationArea::TitleBar;
+    }
     // 按钮从右往左排列（Win10 布局）；窄窗口时按钮区收缩（不越界）。
     const int w = width();
     const int closeX = w - kButtonWidth > 0 ? w - kButtonWidth : 0;
@@ -251,7 +256,54 @@ void View::animateMoveTo(int x, int y) {
     animActive_ = true;
 }
 
+void View::startFadeIn() {
+    // KWin 特效（低优先）：打开淡入。sceneTree_（wlr_scene_xdg_surface）
+    // 结构 = tree 下嵌套 surface_tree（wlr_scene_subsurface_tree_create），
+    // 内容 buffer 在 surface_tree 的 children 里——需下探一层找 BUFFER。
+    if (contentBuffer_ == nullptr && sceneTree_ != nullptr) {
+        wlr_scene_node* child;
+        wl_list_for_each(child, &sceneTree_->children, link) {
+            if (child->type == WLR_SCENE_NODE_BUFFER) {
+                contentBuffer_ = wlr_scene_buffer_from_node(child);
+                break;
+            }
+            if (child->type == WLR_SCENE_NODE_TREE) {
+                wlr_scene_tree* sub = wlr_scene_tree_from_node(child);
+                wlr_scene_node* subChild;
+                wl_list_for_each(subChild, &sub->children, link) {
+                    if (subChild->type == WLR_SCENE_NODE_BUFFER) {
+                        contentBuffer_ = wlr_scene_buffer_from_node(subChild);
+                        break;
+                    }
+                }
+                if (contentBuffer_ != nullptr) {
+                    break;
+                }
+            }
+        }
+    }
+    if (contentBuffer_ == nullptr) {
+        return;  // 无内容节点（异常/窗口未映射内容）：不动画
+    }
+    fadeOpacity_ = 0.0f;
+    fadeActive_ = true;
+    wlr_scene_buffer_set_opacity(contentBuffer_, 0.0f);
+    wlr_log(WLR_INFO, "view fade-in started (opacity 0 → 1)");
+}
+
 void View::tickAnimation() {
+    // KWin 特效（低优先）：打开淡入推进（先于移动动画，独立状态）。
+    if (fadeActive_) {
+        fadeOpacity_ += 0.15f;
+        if (fadeOpacity_ >= 1.0f) {
+            fadeOpacity_ = 1.0f;
+            fadeActive_ = false;
+            wlr_log(WLR_DEBUG, "view fade-in done");
+        }
+        if (contentBuffer_ != nullptr) {
+            wlr_scene_buffer_set_opacity(contentBuffer_, fadeOpacity_);
+        }
+    }
     if (!animActive_) {
         return;
     }
@@ -384,6 +436,11 @@ void View::setMinimized(bool minimize) {
     minimized_ = minimize;
     // 可见性 = mapped && !minimized && 当前工作区（M7 续统一入口）。
     applyVisibility();
+    // KWin 特效（低优先）：还原淡入——最小化是节点 enabled=false
+    // （不触发 map 事件），还原时复用打开淡入机制（内容 0→1）。
+    if (!minimized_ && compositor_.viewVisible(this)) {
+        startFadeIn();
+    }
     if (minimized_) {
         setActivated(false);
     }
@@ -724,6 +781,54 @@ void View::handleFtlDestroy(wl_listener* listener, void* /*data*/) {
 
 // ---- 事件回调 ----
 
+void View::applyRules() {
+    // KDE-GAP 中优先 #6：首条命中的 [window_rules] 规则生效
+    //（KWin 语义简化：不合并多条规则）。
+    const std::string appId = toplevel_->app_id != nullptr
+        ? toplevel_->app_id : "";
+    const std::string title = toplevel_->title != nullptr
+        ? toplevel_->title : "";
+    for (const auto& r : compositor_.windowRules()) {
+        if (!r.matches(appId, title)) {
+            continue;
+        }
+        wlr_log(WLR_INFO, "window rule applied (app_id='%s' title='%s'): "
+                "ws=%d geom=%d,%d,%dx%d ontop=%d borderless=%d",
+                appId.c_str(), title.c_str(), r.workspace,
+                r.hasGeometry ? r.geomX : 0, r.hasGeometry ? r.geomY : 0,
+                r.hasGeometry ? r.geomW : 0, r.hasGeometry ? r.geomH : 0,
+                r.alwaysOnTop ? 1 : 0, r.borderless ? 1 : 0);
+        if (r.workspace >= 0) {
+            setWorkspace(r.workspace);
+        }
+        if (r.hasGeometry) {
+            moveTo(r.geomX, r.geomY);
+            resize(r.geomW, r.geomH);
+            positionInitialized_ = true;  // 规则几何不再层叠
+        }
+        if (r.alwaysOnTop) {
+            alwaysOnTop_ = true;
+            // 审查 M4：内容置顶后装饰树需跟随置顶（否则
+            // always_on_top + 非当前工作区场景装饰被内容盖住）。
+            if (sceneTree_ != nullptr) {
+                wlr_scene_node_raise_to_top(&sceneTree_->node);
+                if (decorationTree_ != nullptr) {
+                    wlr_scene_node_place_above(&decorationTree_->node,
+                                               &sceneTree_->node);
+                }
+            }
+        }
+        if (r.borderless && !borderless_) {
+            borderless_ = true;
+            if (decorationTree_ != nullptr) {
+                wlr_scene_node_destroy(&decorationTree_->node);
+                decorationTree_ = nullptr;
+            }
+        }
+        break;  // 首条命中生效
+    }
+}
+
 void View::handleMap(wl_listener* listener, void* /*data*/) {
     auto* view = W10DE_CONTAINER_OF(listener, View, map_);
     view->mapped_ = true;
@@ -732,6 +837,11 @@ void View::handleMap(wl_listener* listener, void* /*data*/) {
         view->setMinimized(false);
     }
     view->compositor_.addView(view);
+    // 窗口规则（KDE-GAP 中优先 #6）：workspace/geometry/置顶/无边框。
+    // 在初始位置与最大化处理之前应用，规则几何覆盖层叠放置。
+    view->applyRules();
+    // KWin 特效（低优先）：打开淡入（内容透明度 0→1）。
+    view->startFadeIn();
     // 初始位置：仅首次 map 层叠放置，remap 保持原位置。
     if (!view->positionInitialized_) {
         static int cascade = 0;

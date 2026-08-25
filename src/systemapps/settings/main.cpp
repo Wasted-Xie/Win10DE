@@ -113,15 +113,21 @@ int runSelfTest(const QString& baseDir) {
     out << (bl.present ? "OK backlight: " : "OK backlight: none")
         << (bl.present ? bl.device.toUtf8() : QByteArray()) << "\n";
 
-    // 5) 音量换算（pa_volume 0..0x10000 → 0-100）。
+    // 5) 音量换算（审查 M3：读侧与写侧 -20..0dB 对称——Pulse 的
+    //    PA_VOLUME 是立方刻度（dB=60·log10(v/NORM)，探针实测）：
+    //    0x8000=-18.06dB → 10%；0x10000=0dB → 100%；0 → 0；
+    //    0x4000=-36dB → qBound 下界 0）。
     if (w10de::settings::AudioInfo::paVolumeToPercent(0) != 0) {
         return fail(QStringLiteral("paVolumeToPercent(0) != 0"));
     }
-    if (w10de::settings::AudioInfo::paVolumeToPercent(0x8000) != 50) {
-        return fail(QStringLiteral("paVolumeToPercent(0x8000) != 50"));
+    if (w10de::settings::AudioInfo::paVolumeToPercent(0x8000) != 10) {
+        return fail(QStringLiteral("paVolumeToPercent(0x8000) != 10"));
     }
     if (w10de::settings::AudioInfo::paVolumeToPercent(0x10000) != 100) {
         return fail(QStringLiteral("paVolumeToPercent(0x10000) != 100"));
+    }
+    if (w10de::settings::AudioInfo::paVolumeToPercent(0x4000) != 0) {
+        return fail(QStringLiteral("paVolumeToPercent(0x4000) != 0"));
     }
     out << "OK volume-convert\n";
 

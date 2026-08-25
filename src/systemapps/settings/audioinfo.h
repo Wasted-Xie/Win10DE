@@ -18,6 +18,15 @@ struct SinkInfo {
     bool muted = false;
 };
 
+// 应用音频流（sink-input，KDE-GAP 中优先 #4：每应用音量）。
+struct AppStreamInfo {
+    uint32_t index = 0;        // pulse sink-input index（设置音量用）
+    QString name;              // 流名（media.name）
+    QString application;       // application.name（进程名，可能为空）
+    int volumePercent = 100;   // 0-100
+    bool muted = false;
+};
+
 struct AudioInfoImpl;  // 定义在 audioinfo.cpp（PIMPL：libpulse 状态）
 
 class AudioInfo : public QObject {
@@ -37,8 +46,16 @@ public:
     void setVolume(const QString& name, int percent);
     void setMuted(const QString& name, bool muted);
 
+    // ---- 每应用音量（KDE-GAP 中优先 #4）----
+    // 异步查询应用音频流（sink-input）列表；完成发 appStreamsReady。
+    void refreshAppStreams();
+    // 按 sink-input index 设置应用音量（0-100）/静音。
+    void setAppVolume(uint32_t index, int percent);
+    void setAppMuted(uint32_t index, bool muted);
+
 signals:
     void sinksReady(const QList<SinkInfo>& sinks);
+    void appStreamsReady(const QList<AppStreamInfo>& streams);
     void connectionFailed(const QString& reason);
 
 private:

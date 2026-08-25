@@ -19,12 +19,22 @@ struct AudioInfoImpl {
     bool sinkListDone = false;     // eol 到达（列表完整）
     int sinkListSeq = 0;           // 查询序列号（审查 M4：旧查询数据不混入）
     int sinkListPendingSeq = -1;   // 当前发起查询的序列号
+    // 每应用音量（sink-input）查询状态（KDE-GAP 中优先 #4）。
+    QList<AppStreamInfo> appStreams;
+    bool appListPending = false;
+    bool appListDone = false;
+    int appListSeq = 0;
+    int appListPendingSeq = -1;
+    // 审查 M2：sink-input index → 通道数（查询时缓存，set 时按实际
+    // 通道数 pa_cvolume_set，避免依赖 pa_cvolume_remap 单通道语义）。
+    QHash<uint32_t, int> appChannels;
     QTimer* connectTimer = nullptr;  // 连接超时（审查 M1：挂起时允许重建）
     // 待执行的设置命令（连接就绪后按序执行）。
     struct PendingCmd {
-        enum Type { Volume, Mute } type = Volume;
+        enum Type { Volume, Mute, AppVolume, AppMute } type = Volume;
         QString name;
         int value = 0;
+        uint32_t index = 0;
     };
     QList<PendingCmd> pending;
 };
@@ -58,6 +68,39 @@ void onSinkInfo(pa_context* /*c*/, const pa_sink_info* info, int eol, void* user
     self->sinks.append(sink);
 }
 
+// 每应用音量（KDE-GAP 中优先 #4）：sink-input 列表回调。
+void onAppStreamInfo(pa_context* /*c*/, const pa_sink_input_info* info,
+                     int eol, void* user) {
+    auto* self = static_cast<AudioInfoImpl*>(user);
+    if (eol > 0) {
+        if (self->appListPendingSeq == self->appListSeq) {
+            self->appListDone = true;
+        }
+        return;
+    }
+    if (info == nullptr || self->appListPendingSeq != self->appListSeq) {
+        return;
+    }
+    AppStreamInfo s;
+    s.index = info->index;
+    if (info->proplist != nullptr) {
+        const char* media = pa_proplist_gets(info->proplist, "media.name");
+        const char* app = pa_proplist_gets(info->proplist, "application.name");
+        s.name = media != nullptr ? QString::fromUtf8(media)
+                                  : QStringLiteral("音频流 %1").arg(info->index);
+        s.application = app != nullptr ? QString::fromUtf8(app) : QString();
+    } else {
+        s.name = QStringLiteral("音频流 %1").arg(info->index);
+    }
+    s.volumePercent = info->volume.channels > 0
+        ? volumeToPercent(pa_cvolume_avg(&info->volume)) : 100;
+    s.muted = info->mute != 0;
+    // 审查 M2：记录通道数供 setAppVolume 使用。
+    self->appChannels.insert(s.index,
+        qMax(1, static_cast<int>(info->volume.channels)));
+    self->appStreams.append(s);
+}
+
 void onContextState(pa_context* c, void* user) {
     auto* self = static_cast<AudioInfoImpl*>(user);
     switch (pa_context_get_state(c)) {
@@ -68,20 +111,40 @@ void onContextState(pa_context* c, void* user) {
         }
         // 连接就绪：执行挂起命令 + 初始查询。
         for (const auto& cmd : self->pending) {
-            if (cmd.type == AudioInfoImpl::PendingCmd::Volume) {
+            pa_operation* op = nullptr;
+            switch (cmd.type) {
+            case AudioInfoImpl::PendingCmd::Volume: {
                 pa_cvolume cv;
                 pa_cvolume_set(&cv, 1,
                     cmd.value <= 0 ? PA_VOLUME_MUTED
                                    : pa_sw_volume_from_dB(
                                          cmd.value * 20.0 / 100.0 - 20.0));
-                pa_operation* op = pa_context_set_sink_volume_by_name(
+                op = pa_context_set_sink_volume_by_name(
                     c, cmd.name.toUtf8().constData(), &cv, nullptr, nullptr);
-                if (op != nullptr) pa_operation_unref(op);
-            } else {
-                pa_operation* op = pa_context_set_sink_mute_by_name(
-                    c, cmd.name.toUtf8().constData(), cmd.value, nullptr, nullptr);
-                if (op != nullptr) pa_operation_unref(op);
+                break;
             }
+            case AudioInfoImpl::PendingCmd::Mute:
+                op = pa_context_set_sink_mute_by_name(
+                    c, cmd.name.toUtf8().constData(), cmd.value,
+                    nullptr, nullptr);
+                break;
+            case AudioInfoImpl::PendingCmd::AppVolume: {
+                pa_cvolume cv;
+                pa_cvolume_set(&cv,
+                    self->appChannels.value(cmd.index, 1),
+                    cmd.value <= 0 ? PA_VOLUME_MUTED
+                                   : pa_sw_volume_from_dB(
+                                         cmd.value * 20.0 / 100.0 - 20.0));
+                op = pa_context_set_sink_input_volume(
+                    c, cmd.index, &cv, nullptr, nullptr);
+                break;
+            }
+            case AudioInfoImpl::PendingCmd::AppMute:
+                op = pa_context_set_sink_input_mute(
+                    c, cmd.index, cmd.value, nullptr, nullptr);
+                break;
+            }
+            if (op != nullptr) pa_operation_unref(op);
         }
         self->pending.clear();
         self->sinks.clear();
@@ -91,10 +154,23 @@ void onContextState(pa_context* c, void* user) {
         self->sinkListDone = false;
         pa_operation* op = pa_context_get_sink_info_list(c, onSinkInfo, self);
         if (op != nullptr) pa_operation_unref(op);
+        // 每应用音量初始查询（sink-input）。
+        self->appStreams.clear();
+        self->appChannels.clear();
+        self->appListSeq++;
+        self->appListPendingSeq = self->appListSeq;
+        self->appListPending = true;
+        self->appListDone = false;
+        op = pa_context_get_sink_input_info_list(c, onAppStreamInfo, self);
+        if (op != nullptr) pa_operation_unref(op);
         break;
     }
     case PA_CONTEXT_FAILED: {
         self->connecting = false;
+        // 审查 M1：失败/断开复位查询挂起标志——否则驱动 timer 的停止
+        // 条件（!pending && !connecting）永不满足，每 20ms 空转泄漏。
+        self->sinkListPending = false;
+        self->appListPending = false;
         if (self->connectTimer != nullptr) {
             self->connectTimer->stop();
         }
@@ -107,6 +183,8 @@ void onContextState(pa_context* c, void* user) {
     }
     case PA_CONTEXT_TERMINATED: {
         self->connecting = false;
+        self->sinkListPending = false;
+        self->appListPending = false;
         if (self->connectTimer != nullptr) {
             self->connectTimer->stop();
         }
@@ -125,10 +203,13 @@ void onContextState(pa_context* c, void* user) {
 }  // namespace
 
 int AudioInfo::paVolumeToPercent(unsigned int paVolume) {
-    if (paVolume >= PA_VOLUME_NORM) {
-        return 100;
+    // 审查 M3：与写侧 -20..0dB 映射对称——线性读（v*100/NORM）在写侧
+    // dB 指数下会回跳（写 50%→-10dB→读 31%）。KDE kcm_pulseaudio 同做法。
+    if (paVolume <= 0 || paVolume >= PA_VOLUME_NORM) {
+        return paVolume >= PA_VOLUME_NORM ? 100 : 0;
     }
-    return static_cast<int>(paVolume * 100 / PA_VOLUME_NORM);
+    const double dB = pa_sw_volume_to_dB(paVolume);
+    return qBound(0, qRound((dB + 20.0) / 20.0 * 100.0), 100);
 }
 
 AudioInfo::AudioInfo(QObject* parent) : QObject(parent) {
@@ -237,6 +318,17 @@ void AudioInfo::runMainloopOnce() {
         impl_->sinks.clear();
         emit sinksReady(ready);
     }
+    // 应用流查询完成（每应用音量）。
+    if (impl_->appListPending &&
+            impl_->appListPendingSeq == impl_->appListSeq &&
+            impl_->appListDone) {
+        impl_->appListPending = false;
+        impl_->appListDone = false;
+        available_ = true;
+        const QList<AppStreamInfo> ready = impl_->appStreams;
+        impl_->appStreams.clear();
+        emit appStreamsReady(ready);
+    }
 }
 
 void AudioInfo::refreshSinks() {
@@ -263,11 +355,12 @@ void AudioInfo::refreshSinks() {
     timer->setInterval(20);
     connect(timer, &QTimer::timeout, this, [this, timer] {
         runMainloopOnce();
-        // 查询完成或服务不可用时停止。
+        // 查询完成或服务不可用时停止（审查 M1：TERMINATED 同 FAILED 兜底）。
         const bool finished = !impl_->sinkListPending &&
             !impl_->connecting;
         const bool failed = impl_->context != nullptr &&
-            pa_context_get_state(impl_->context) == PA_CONTEXT_FAILED;
+            (pa_context_get_state(impl_->context) == PA_CONTEXT_FAILED ||
+             pa_context_get_state(impl_->context) == PA_CONTEXT_TERMINATED);
         if (finished || failed) {
             timer->stop();
             timer->deleteLater();
@@ -314,6 +407,86 @@ void AudioInfo::setMuted(const QString& name, bool muted) {
         AudioInfoImpl::PendingCmd cmd;
         cmd.type = AudioInfoImpl::PendingCmd::Mute;
         cmd.name = name;
+        cmd.value = muted ? 1 : 0;
+        impl_->pending.append(cmd);
+        ensureContext();
+    }
+}
+
+void AudioInfo::refreshAppStreams() {
+    if (impl_ == nullptr) {
+        emit connectionFailed(QStringLiteral("音频后端初始化失败"));
+        return;
+    }
+    impl_->appStreams.clear();
+    const pa_context_state_t st = pa_context_get_state(impl_->context);
+    if (st == PA_CONTEXT_READY) {
+        impl_->appListSeq++;
+        impl_->appListPendingSeq = impl_->appListSeq;
+        impl_->appListPending = true;
+        impl_->appListDone = false;
+        impl_->appChannels.clear();
+        pa_operation* op = pa_context_get_sink_input_info_list(
+            impl_->context, onAppStreamInfo, impl_);
+        if (op != nullptr) pa_operation_unref(op);
+    } else {
+        ensureContext();
+    }
+    // mainloop 驱动（与 refreshSinks 同款）。
+    auto* timer = new QTimer(this);
+    timer->setInterval(20);
+    connect(timer, &QTimer::timeout, this, [this, timer] {
+        runMainloopOnce();
+        const bool finished = !impl_->appListPending &&
+            !impl_->connecting;
+        const bool failed = impl_->context != nullptr &&
+            (pa_context_get_state(impl_->context) == PA_CONTEXT_FAILED ||
+             pa_context_get_state(impl_->context) == PA_CONTEXT_TERMINATED);
+        if (finished || failed) {
+            timer->stop();
+            timer->deleteLater();
+        }
+    });
+    timer->start();
+}
+
+void AudioInfo::setAppVolume(uint32_t index, int percent) {
+    if (impl_ == nullptr) {
+        return;
+    }
+    percent = qBound(0, percent, 100);
+    if (pa_context_get_state(impl_->context) == PA_CONTEXT_READY) {
+        pa_cvolume cv;
+        // 审查 M2：按实际通道数设置（缓存自查询回调）。
+        pa_cvolume_set(&cv, impl_->appChannels.value(index, 1),
+            percent <= 0 ? PA_VOLUME_MUTED
+                         : pa_sw_volume_from_dB(
+                               percent * 20.0 / 100.0 - 20.0));
+        pa_operation* op = pa_context_set_sink_input_volume(
+            impl_->context, index, &cv, nullptr, nullptr);
+        if (op != nullptr) pa_operation_unref(op);
+    } else {
+        AudioInfoImpl::PendingCmd cmd;
+        cmd.type = AudioInfoImpl::PendingCmd::AppVolume;
+        cmd.index = index;
+        cmd.value = percent;
+        impl_->pending.append(cmd);
+        ensureContext();
+    }
+}
+
+void AudioInfo::setAppMuted(uint32_t index, bool muted) {
+    if (impl_ == nullptr) {
+        return;
+    }
+    if (pa_context_get_state(impl_->context) == PA_CONTEXT_READY) {
+        pa_operation* op = pa_context_set_sink_input_mute(
+            impl_->context, index, muted ? 1 : 0, nullptr, nullptr);
+        if (op != nullptr) pa_operation_unref(op);
+    } else {
+        AudioInfoImpl::PendingCmd cmd;
+        cmd.type = AudioInfoImpl::PendingCmd::AppMute;
+        cmd.index = index;
         cmd.value = muted ? 1 : 0;
         impl_->pending.append(cmd);
         ensureContext();

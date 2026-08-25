@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <cstdlib>  // free / getenv / strcmp
+#include <ctime>     // Night Light 时间窗（localtime_r）
+#include <vector>    // Night Light gamma 表
 #include <cstring>
 #include <sys/wait.h>  // waitpid（toggleClipboardHistory 中间子进程回收）
 #include <unistd.h>  // fork / execlp / setsid
@@ -23,11 +25,21 @@ extern "C" {
 
 namespace w10de {
 
+// Night Light 每分钟检查（单次 timer：回调末尾重新排期；实现见后）。
+namespace {
+int nightLightTimerCallback(void* data);
+}
+
 Compositor::Compositor(CompositorOptions opts) : options_(std::move(opts)) {}
 
 Compositor::~Compositor() {
     if (display_ == nullptr) {
         return;
+    }
+    // Night Light timer 清理（先于事件循环销毁）。
+    if (nightLightTimer_ != nullptr) {
+        wl_event_source_remove(nightLightTimer_);
+        nightLightTimer_ = nullptr;
     }
     // 清理顺序：
     // 1. 断开客户端 —— 触发各 View 的 destroy（delete this），视图列表清空；
@@ -101,6 +113,20 @@ bool Compositor::init() {
 
     // 快捷键绑定：从 [shortcuts] 段加载（未配置项保持默认；第二批）。
     shortcuts_ = loadShortcuts(Config::load(options_.configPath));
+    // 窗口规则（KDE-GAP 中优先 #6）：[window_rules] 段；View::applyRules
+    // map 时匹配 app_id/title。
+    windowRules_ = w10de::ipc::loadWindowRules(options_.configPath);
+    if (!windowRules_.empty()) {
+        wlr_log(WLR_INFO, "%zu window rule(s) loaded", windowRules_.size());
+    }
+    // Night Light（低优先）：[night_light] 段；启动应用 + 每分钟检查切换。
+    nightLight_ = w10de::ipc::loadNightLightConfig(options_.configPath);
+    if (nightLight_.enabled) {
+        wlr_log(WLR_INFO, "night light enabled: %dK %02d:%02d-%02d:%02d",
+                nightLight_.temperature,
+                nightLight_.startMinutes / 60, nightLight_.startMinutes % 60,
+                nightLight_.endMinutes / 60, nightLight_.endMinutes % 60);
+    }
 
     // 启动工作区（M7 续；View 构造时读取 currentWorkspace_ 作为归属）。
     currentWorkspace_ = options_.initialWorkspace;
@@ -141,9 +167,16 @@ bool Compositor::init() {
             return false;
         }
         // headless 后端初始无输出；new_output 在 wlr_backend_start() 时触发。
-        if (wlr_headless_add_output(backend_, options_.width, options_.height) == nullptr) {
-            wlr_log(WLR_ERROR, "failed to add headless output");
-            return false;
+        // 多输出（--outputs N，KDE-GAP 中优先 #5）：逐个创建，layout 由
+        // Output 构造的 add_auto 自动排成一行。
+        const int n = std::max(1, options_.outputs);
+        for (int i = 0; i < n; ++i) {
+            if (wlr_headless_add_output(backend_, options_.width,
+                                        options_.height) == nullptr) {
+                wlr_log(WLR_ERROR, "failed to add headless output %d/%d",
+                        i + 1, n);
+                return false;
+            }
         }
     } else {
         backend_ = wlr_backend_autocreate(loop, &session);
@@ -307,6 +340,19 @@ bool Compositor::init() {
         return false;
     }
 
+    // ---- Night Light（低优先）：启动应用当前色温 + 每分钟检查时间窗 ----
+    applyNightLight();
+    // 审查 L1：仅启用时建每分钟 timer（禁用时空跑无意义；启动已应用
+    // 一次以重置 gamma，热插拔路径也独立应用）。
+    if (nightLight_.enabled) {
+        nightLightTimer_ = wl_event_loop_add_timer(loop,
+                                                   nightLightTimerCallback,
+                                                   this);
+        if (nightLightTimer_ != nullptr) {
+            wl_event_source_timer_update(nightLightTimer_, 60 * 1000);
+        }
+    }
+
     // ---- D-Bus 服务（org.w10de.Compositor：显示设置 IPC，第二批）----
     // 需要 display 与事件循环就绪；失败降级（设置应用显示模块不可用）。
     dbus_ = std::make_unique<CompositorDbus>(*this);
@@ -317,8 +363,67 @@ bool Compositor::init() {
     return true;
 }
 
-int Compositor::run() {
-    const char* socket = nullptr;
+namespace {
+
+// Night Light 每分钟检查（单次 timer：回调末尾重新排期）。
+int nightLightTimerCallback(void* data) {
+    auto* compositor = static_cast<Compositor*>(data);
+    compositor->applyNightLight();
+    if (compositor->nightLightTimer() != nullptr) {
+        wl_event_source_timer_update(compositor->nightLightTimer(),
+                                     60 * 1000);
+    }
+    return 0;
+}
+
+}  // namespace
+
+void Compositor::applyNightLight(bool force) {
+    // 当前时间 → 时间窗判断；无变化跳过（避免每分钟重设 gamma）。
+    // 审查 S1：force（热插拔）时跳过去重——夜间运行中插入新显示器，
+    // active 未变但新输出必须拿到 gamma LUT。
+    std::time_t now = std::time(nullptr);
+    std::tm tmv{};
+    localtime_r(&now, &tmv);
+    const int mins = tmv.tm_hour * 60 + tmv.tm_min;
+    const bool active = w10de::ipc::isNightActive(nightLight_, mins);
+    if (!force && active == nightLightActive_ && appliedOnce_) {
+        return;
+    }
+    nightLightActive_ = active;
+    appliedOnce_ = true;
+    wlr_log(WLR_INFO, "night light %s (%dK)",
+            active ? "on" : "off", nightLight_.temperature);
+    for (const auto& out : outputs_) {
+        const size_t size = wlr_output_get_gamma_size(out->wlr());
+        if (size == 0) {
+            continue;  // 不支持 gamma（headless 可能 0）
+        }
+        wlr_output_state state;
+        wlr_output_state_init(&state);
+        if (active) {
+            std::vector<uint16_t> r(size), g(size), b(size);
+            if (w10de::ipc::buildGammaRamps(
+                    nightLight_.temperature, size,
+                    r.data(), g.data(), b.data())) {
+                wlr_output_state_set_gamma_lut(&state, size,
+                                               r.data(), g.data(), b.data());
+            }
+        } else {
+            // 零尺寸 ramp = 重置 gamma。
+            wlr_output_state_set_gamma_lut(&state, 0, nullptr, nullptr,
+                                           nullptr);
+        }
+        // 审查 M3：提交失败记日志（DRM gamma 错误静默无排障入口）。
+        if (!wlr_output_commit_state(out->wlr(), &state)) {
+            wlr_log(WLR_ERROR, "night light: failed to commit gamma on '%s'",
+                    out->wlr()->name);
+        }
+        wlr_output_state_finish(&state);
+    }
+}
+
+int Compositor::run() {    const char* socket = nullptr;
     std::string ownedSocket;  // add_socket_auto 返回的 strdup 内存
     if (!options_.socketName.empty()) {
         if (wl_display_add_socket(display_, options_.socketName.c_str()) != 0) {
@@ -372,6 +477,19 @@ void Compositor::raiseView(View* view) {
         wlr_scene_tree* decoration = view->decorationTree();
         if (decoration != nullptr) {
             wlr_scene_node_place_above(&decoration->node, &view->sceneTree()->node);
+        }
+    }
+    // 审查 M4（窗口规则）：置顶窗口必须保持在最上——新窗口 map/点击
+    // 激活等任意 raiseView 后，re-raise 所有 always_on_top 窗口。
+    for (View* v : views_) {
+        if (v == view || !v->alwaysOnTop() || !v->mapped() ||
+                v->sceneTree() == nullptr) {
+            continue;
+        }
+        wlr_scene_node_raise_to_top(&v->sceneTree()->node);
+        wlr_scene_tree* dec = v->decorationTree();
+        if (dec != nullptr) {
+            wlr_scene_node_place_above(&dec->node, &v->sceneTree()->node);
         }
     }
 }
@@ -571,6 +689,9 @@ void Compositor::handleNewOutput(wl_listener* listener, void* data) {
         return;
     }
     compositor->outputs_.push_back(std::move(out));
+    // Night Light：新输出（热插拔）应用当前 gamma（低优先；审查 S1：
+    // force 跳过去重——否则夜间运行中插入新输出永远拿不到 LUT）。
+    compositor->applyNightLight(true);
 }
 
 void Compositor::handleNewInput(wl_listener* listener, void* data) {

@@ -3,6 +3,7 @@
 #pragma once
 
 #include <QMainWindow>
+#include <QHash>
 #include <QStringList>
 
 #include "systemapps/settings/audioinfo.h"  // SinkInfo（音频页信号参数）
@@ -15,9 +16,12 @@ class QLineEdit;
 class QStackedWidget;
 class QLabel;
 class QSlider;
+class QTableWidget;
 class QTimer;
 
 namespace w10de::settings {
+
+class MonitorArrangementWidget;  // 显示页排列控件（cpp 中定义）
 
 class SettingsWindow : public QMainWindow {
     Q_OBJECT
@@ -54,6 +58,8 @@ private:
     void refreshOutputs();
     void loadOutputDetails(int index);
     void applyDisplaySettings();
+    // 显示器排列（中优先 #5：图形化排列 GUI）
+    void applyArrangement();
     // 电源页（第二批：UPower 语义 sysfs 电池/背光）
     void refreshPower();
     void applyBrightness(int value);
@@ -62,6 +68,11 @@ private:
     void onAudioSinksReady(const QList<w10de::settings::SinkInfo>& sinks);
     void applyAudioVolume(int value);
     void toggleAudioMute(bool muted);
+    // 每应用音量（中优先 #4：sink-input 应用流）
+    void onAudioAppStreamsReady(
+        const QList<w10de::settings::AppStreamInfo>& streams);
+    void applyAppVolume(int row, int value);
+    void toggleAppMute(int row, bool muted);
     // 默认应用页（第二批收官：mimeapps.list）
     bool applyDefault(int kindIndex);  // 返回是否成功（失败中断循环 L7）
     // 网络页（第三批：NetworkManager 状态）
@@ -96,6 +107,8 @@ private:
     int curWidth_ = 0;
     int curHeight_ = 0;
     int curScalePercent_ = 100;
+    // 显示器排列控件（中优先 #5；数据由控件自身持有）。
+    MonitorArrangementWidget* arrangement_ = nullptr;
     // 电源页控件
     QLabel* batteryValue_ = nullptr;
     QLabel* backlightValue_ = nullptr;
@@ -111,6 +124,12 @@ private:
     class AudioInfo* audio_ = nullptr;
     QList<w10de::settings::SinkInfo> sinkCache_;  // 切换设备时更新滑块显示（L7）
     QTimer* audioTimeoutTimer_ = nullptr;  // 连接超时兜底（可取消，L1）
+    // 每应用音量控件（中优先 #4）
+    QTableWidget* appStreamTable_ = nullptr;
+    QLabel* appStreamStatus_ = nullptr;
+    QList<w10de::settings::AppStreamInfo> appStreamCache_;
+    // 应用行号 → 控件映射（滑块/静音回调定位行）。
+    QHash<int, uint32_t> appRowIndex_;
     // 默认应用页控件
     QList<QComboBox*> defaultCombos_;  // 每类别一个下拉（0=浏览器/1=邮件/2=文件管理器）
     QLabel* defaultsStatus_ = nullptr;

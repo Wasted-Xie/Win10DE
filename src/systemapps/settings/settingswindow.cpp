@@ -20,10 +20,13 @@
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QHash>
+#include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMessageBox>
+#include <QMouseEvent>
+#include <QPainter>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QSet>
@@ -33,9 +36,12 @@
 #include <QStackedWidget>
 #include <QStandardPaths>
 #include <QStatusBar>
+#include <QTableWidget>
 #include <QTextStream>
 #include <QTimer>
 #include <QVBoxLayout>
+
+#include <algorithm>  // std::min/std::max（排列控件基准映射）
 
 #include "ipc/config.h"
 #include "ipc/inputsettings.h"
@@ -280,6 +286,156 @@ const QDBusArgument& operator>>(const QDBusArgument& arg, ModeInfo& m) {
     return arg;
 }
 
+// ---- 显示器排列控件（KDE-GAP 中优先 #5：图形化排列 GUI）----
+// 自绘显示器矩形（按逻辑尺寸比例）+ 拖拽移动。坐标映射用**基准包围盒**
+// （setOutputs 时固定），拖拽不重算——避免显示器移动导致整体缩放/偏移
+// 跳变。
+class MonitorArrangementWidget : public QWidget {
+public:
+    explicit MonitorArrangementWidget(QWidget* parent = nullptr)
+        : QWidget(parent) {
+        setMinimumHeight(180);
+    }
+
+    // 设置输出列表（显示页刷新后调用）；重置拖拽与基准。
+    // 审查 M4：GetOutputs 的 w/h 是物理分辨率、x/y 是逻辑坐标——
+    // scale≠100 时混用会致矩形比例失真，此处统一换算为逻辑尺寸
+    // （显示与拖拽一致；positions() 的 x/y 不受影响）。
+    void setOutputs(const QList<OutputInfo>& outputs) {
+        outputs_ = outputs;
+        for (OutputInfo& o : outputs_) {
+            if (o.scale > 0 && o.scale != 100) {
+                o.w = qRound(o.w * 100.0 / o.scale);
+                o.h = qRound(o.h * 100.0 / o.scale);
+            }
+        }
+        dragIndex_ = -1;
+        changed_ = false;  // 应用后回读刷新会重置"已编辑"标记
+        rebuildBase();
+        update();
+    }
+
+    // 当前各输出位置（name → (x,y)，含未拖拽的原始值）。
+    QList<OutputInfo> positions() const { return outputs_; }
+    bool hasChanges() const { return changed_; }
+
+protected:
+    void paintEvent(QPaintEvent*) override;
+    void mousePressEvent(QMouseEvent* e) override;
+    void mouseMoveEvent(QMouseEvent* e) override;
+    void mouseReleaseEvent(QMouseEvent* e) override;
+    // 审查 M5：窗口拉伸后重算基准映射（排列图跟随缩放/居中）。
+    void resizeEvent(QResizeEvent*) override {
+        rebuildBase();
+        update();
+    }
+
+private:
+    // 计算基准映射（包围盒 → widget 可用区，保持比例居中）。
+    void rebuildBase() {
+        int minX = 0, minY = 0, maxX = 0, maxY = 0;
+        for (const OutputInfo& o : outputs_) {
+            minX = std::min(minX, o.x);
+            minY = std::min(minY, o.y);
+            maxX = std::max(maxX, o.x + o.w);
+            maxY = std::max(maxY, o.y + o.h);
+        }
+        baseW_ = maxX - minX;
+        baseH_ = maxY - minY;
+        const QSize avail = size() - QSize(48, 48);
+        // 审查：widget 未布局时 size() 可能为 0 → 下限防除零/负缩放。
+        baseScale_ = (baseW_ > 0 && baseH_ > 0 && avail.width() > 0
+                      && avail.height() > 0)
+            ? std::max(0.01,
+                std::min(static_cast<double>(avail.width()) / baseW_,
+                         static_cast<double>(avail.height()) / baseH_))
+            : 1.0;
+        baseOx_ = (width() - baseW_ * baseScale_) / 2 - minX * baseScale_;
+        baseOy_ = (height() - baseH_ * baseScale_) / 2 - minY * baseScale_;
+    }
+    // 输出逻辑坐标 → widget 像素（用基准映射）。
+    QRect mapToWidget(const OutputInfo& o) const {
+        return QRect(qRound(baseOx_ + o.x * baseScale_),
+                     qRound(baseOy_ + o.y * baseScale_),
+                     qRound(o.w * baseScale_), qRound(o.h * baseScale_));
+    }
+
+    QList<OutputInfo> outputs_;
+    int dragIndex_ = -1;
+    int dragOffsetX_ = 0, dragOffsetY_ = 0;  // 按下点与矩形左上偏移（像素）
+    bool changed_ = false;
+    // 基准映射参数。
+    int baseW_ = 1, baseH_ = 1;
+    double baseScale_ = 1.0;
+    int baseOx_ = 0, baseOy_ = 0;
+};
+
+void MonitorArrangementWidget::paintEvent(QPaintEvent*) {
+    QPainter p(this);
+    p.fillRect(rect(), QColor(20, 24, 30));
+    if (outputs_.isEmpty()) {
+        p.setPen(QColor(150, 155, 165));
+        p.drawText(rect(), Qt::AlignCenter,
+                   QStringLiteral("无输出（compositor 未连接）"));
+        return;
+    }
+    for (int i = 0; i < outputs_.size(); ++i) {
+        const OutputInfo& o = outputs_.at(i);
+        const QRect r = mapToWidget(o);
+        const bool selected = (i == dragIndex_);
+        p.setPen(QPen(selected ? QColor(0, 120, 215)
+                               : QColor(90, 95, 105), 2));
+        p.setBrush(QColor(45, 50, 60));
+        p.drawRect(r.adjusted(0, 0, -1, -1));
+        p.setPen(QColor(235, 235, 235));
+        p.drawText(r.adjusted(6, 6, -6, -6),
+                   Qt::AlignLeft | Qt::AlignTop,
+                   QStringLiteral("%1\n%2×%3").arg(o.name).arg(o.w).arg(o.h));
+    }
+    p.setPen(QColor(150, 155, 165));
+    p.drawText(rect().adjusted(8, 8, -8, -8),
+               Qt::AlignBottom | Qt::AlignLeft,
+               QStringLiteral("拖拽显示器调整排列，然后点击【应用排列】按钮。"));
+}
+
+void MonitorArrangementWidget::mousePressEvent(QMouseEvent* e) {
+    for (int i = outputs_.size() - 1; i >= 0; --i) {
+        if (mapToWidget(outputs_.at(i))
+                .adjusted(-4, -4, 4, 4).contains(e->pos())) {
+            dragIndex_ = i;
+            const QRect r = mapToWidget(outputs_.at(i));
+            dragOffsetX_ = e->pos().x() - r.x();
+            dragOffsetY_ = e->pos().y() - r.y();
+            update();
+            return;
+        }
+    }
+    dragIndex_ = -1;
+}
+
+void MonitorArrangementWidget::mouseMoveEvent(QMouseEvent* e) {
+    if (dragIndex_ < 0 || dragIndex_ >= outputs_.size()) {
+        return;
+    }
+    OutputInfo& o = outputs_[dragIndex_];
+    const QRect r0 = mapToWidget(o);  // 基准映射，不随拖拽漂移
+    // 像素位移 → 逻辑位移；网格对齐用 qRound（对称四舍五入，
+    // C++ 整除向零截断对负值不对称）。
+    const int dxPx = e->pos().x() - (r0.x() + dragOffsetX_);
+    const int dyPx = e->pos().y() - (r0.y() + dragOffsetY_);
+    o.x = qRound((o.x + qRound(dxPx / baseScale_)) / 10.0) * 10;
+    o.y = qRound((o.y + qRound(dyPx / baseScale_)) / 10.0) * 10;
+    changed_ = true;
+    update();
+}
+
+void MonitorArrangementWidget::mouseReleaseEvent(QMouseEvent*) {
+    if (dragIndex_ >= 0) {
+        dragIndex_ = -1;
+        update();
+    }
+}
+
 void SettingsWindow::buildDisplayPage() {
     auto* page = new QWidget(pages_);
     auto* lay = new QVBoxLayout(page);
@@ -317,6 +473,17 @@ void SettingsWindow::buildDisplayPage() {
     btnRow->addWidget(refreshBtn);
     btnRow->addStretch(1);
     lay->addLayout(btnRow);
+
+    // ---- 显示器排列（KDE-GAP 中优先 #5：图形化排列 GUI）----
+    auto* arrTitle = new QLabel(QStringLiteral("排列"), page);
+    arrTitle->setStyleSheet(QStringLiteral(
+        "font-size: 15px; font-weight: bold; margin-top: 8px;"));
+    lay->addWidget(arrTitle);
+    arrangement_ = new MonitorArrangementWidget(page);
+    lay->addWidget(arrangement_);
+    auto* arrBtn = new QPushButton(QStringLiteral("应用排列"), page);
+    connect(arrBtn, &QPushButton::clicked, this, &SettingsWindow::applyArrangement);
+    lay->addWidget(arrBtn, 0, Qt::AlignLeft);
 
     displayStatus_ = new QLabel(QStringLiteral("未连接合成器（org.w10de.Compositor 不可用）。"), page);
     displayStatus_->setStyleSheet(QStringLiteral("color: %1;")
@@ -363,6 +530,8 @@ void SettingsWindow::refreshOutputs() {
             .arg(o.name).arg(o.w).arg(o.h).arg(o.scale));
         outputNames_.append(o.name);
     }
+    // 排列控件（中优先 #5）：多输出图形化显示/拖拽。
+    arrangement_->setOutputs(outputs);
     if (outputs.isEmpty()) {
         displayStatus_->setText(QStringLiteral("合成器无输出。"));
         return;
@@ -499,6 +668,41 @@ void SettingsWindow::applyDisplaySettings() {
     }
 }
 
+void SettingsWindow::applyArrangement() {
+    // 中优先 #5：把排列控件的拖拽结果（各输出逻辑坐标）经 SetPosition
+    // 热应用到 compositor 布局。
+    if (arrangement_ == nullptr || !arrangement_->hasChanges()) {
+        displayStatus_->setText(QStringLiteral("未检测到排列变化。"));
+        return;
+    }
+    QDBusInterface iface = compositorOutputsIface(this);
+    if (!iface.isValid()) {
+        displayStatus_->setText(QStringLiteral("合成器 D-Bus 服务不可用。"));
+        return;
+    }
+    int applied = 0;
+    int total = 0;
+    QString errMsg;
+    for (const OutputInfo& o : arrangement_->positions()) {
+        ++total;
+        const QDBusReply<void> r = iface.call(QStringLiteral("SetPosition"),
+                                              o.name, o.x, o.y);
+        if (!r.isValid()) {
+            errMsg = r.error().message();
+            break;
+        }
+        ++applied;
+    }
+    // 审查 M2：部分失败时同时显示成功数与失败原因（不再丢弃 errMsg）。
+    displayStatus_->setText(applied == total
+        ? QStringLiteral("已应用排列：%1 个输出。").arg(applied)
+        : QStringLiteral("已应用排列 %1/%2 个输出，失败：%3")
+              .arg(applied).arg(total).arg(errMsg));
+    if (applied > 0) {
+        refreshOutputs();  // 回读确认（刷新会重置排列控件为实际位置）
+    }
+}
+
 // ---- 电源页（第二批：UPower 语义，sysfs 电池/背光直读）----
 
 void SettingsWindow::buildPowerPage() {
@@ -546,6 +750,10 @@ void SettingsWindow::buildPowerPage() {
         if (!brightnessSlider_->isSliderDown()) {
             applyBrightness(value);
         }
+    });
+    // 审查 M4（同款缺陷）：拖动释放不重发 valueChanged，补写最终值。
+    connect(brightnessSlider_, &QSlider::sliderReleased, this, [this] {
+        applyBrightness(brightnessSlider_->value());
     });
     pages_->addWidget(page);
     categoryList_->addItem(QStringLiteral("电源"));
@@ -664,22 +872,62 @@ void SettingsWindow::buildAudioPage() {
     btnRow->addWidget(refreshBtn);
     btnRow->addStretch(1);
     lay->addLayout(btnRow);
+
+    // ---- 每应用音量（KDE-GAP 中优先 #4：sink-input 应用流）----
+    auto* appTitle = new QLabel(QStringLiteral("应用音量"), page);
+    appTitle->setStyleSheet(QStringLiteral(
+        "font-size: 15px; font-weight: bold; margin-top: 8px;"));
+    lay->addWidget(appTitle);
+    appStreamTable_ = new QTableWidget(page);
+    appStreamTable_->setColumnCount(3);
+    appStreamTable_->setHorizontalHeaderLabels(
+        {QStringLiteral("应用"), QStringLiteral("音量"), QStringLiteral("静音")});
+    appStreamTable_->horizontalHeader()->setStretchLastSection(false);
+    appStreamTable_->horizontalHeader()->setSectionResizeMode(
+        0, QHeaderView::Stretch);
+    appStreamTable_->horizontalHeader()->setSectionResizeMode(
+        1, QHeaderView::ResizeToContents);
+    appStreamTable_->horizontalHeader()->setSectionResizeMode(
+        2, QHeaderView::ResizeToContents);
+    appStreamTable_->verticalHeader()->setVisible(false);
+    appStreamTable_->setSelectionMode(QAbstractItemView::NoSelection);
+    appStreamTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    appStreamTable_->setFixedHeight(160);
+    appStreamTable_->setAlternatingRowColors(true);
+    lay->addWidget(appStreamTable_);
+    appStreamStatus_ = new QLabel(QStringLiteral("（无活动应用）"), page);
+    appStreamStatus_->setStyleSheet(QStringLiteral("color: %1;")
+        .arg(theme::kTextSecondary().name()));
+    lay->addWidget(appStreamStatus_);
     lay->addStretch(1);
 
     audio_ = new AudioInfo(this);
     connect(refreshBtn, &QPushButton::clicked, this, &SettingsWindow::refreshAudio);
     connect(audio_, &AudioInfo::sinksReady, this, &SettingsWindow::onAudioSinksReady);
+    connect(audio_, &AudioInfo::appStreamsReady,
+            this, &SettingsWindow::onAudioAppStreamsReady);
     connect(audio_, &AudioInfo::connectionFailed, this, [this](const QString& reason) {
         qInfo("settings: audio unavailable: %s", qPrintable(reason));
         audioStatus_->setText(reason);
         sinkCombo_->setEnabled(false);
         volumeSlider_->setEnabled(false);
         muteCheck_->setEnabled(false);
+        appStreamTable_->setRowCount(0);
+        appStreamStatus_->setText(reason);
+        appRowIndex_.clear();  // 审查 L1：连接失败清行映射（防御性）
     });
-    // 音量滑块：拖动中不写，释放/键盘改后写（与亮度滑块同语义）。
+    // 音量滑块：拖动中不写，释放/键盘改后写（审查 M4：Qt 拖动 handle
+    // 释放时不重发 valueChanged（qabstractslider 仅 position!=value 时
+    // 补发 SliderMove）——仅靠 isSliderDown 过滤会丢最终值，须补
+    // sliderReleased 写最终值）。
     connect(volumeSlider_, &QSlider::valueChanged, this, [this](int value) {
         if (!volumeSlider_->isSliderDown() && sinkCombo_->currentIndex() >= 0) {
             applyAudioVolume(value);
+        }
+    });
+    connect(volumeSlider_, &QSlider::sliderReleased, this, [this] {
+        if (sinkCombo_->currentIndex() >= 0) {
+            applyAudioVolume(volumeSlider_->value());
         }
     });
     connect(muteCheck_, &QCheckBox::toggled, this, &SettingsWindow::toggleAudioMute);
@@ -721,6 +969,66 @@ void SettingsWindow::refreshAudio() {
     }
     audioTimeoutTimer_->start();
     audio_->refreshSinks();
+    audio_->refreshAppStreams();  // 每应用音量（中优先 #4）
+}
+
+void SettingsWindow::onAudioAppStreamsReady(
+        const QList<AppStreamInfo>& streams) {
+    appStreamCache_ = streams;
+    appRowIndex_.clear();
+    appStreamTable_->setRowCount(streams.size());
+    for (int row = 0; row < streams.size(); ++row) {
+        const AppStreamInfo& s = streams.at(row);
+        appRowIndex_.insert(row, s.index);
+        // 列 0：应用名（application.name 优先，media.name 兜底）。
+        auto* nameItem = new QTableWidgetItem(
+            s.application.isEmpty() ? s.name
+                                    : QStringLiteral("%1（%2）")
+                                          .arg(s.application, s.name));
+        appStreamTable_->setItem(row, 0, nameItem);
+        // 列 1：音量滑块（拖动中不写，释放后写）。
+        auto* slider = new QSlider(Qt::Horizontal);
+        slider->setRange(0, 100);
+        slider->setValue(s.volumePercent);
+        appStreamTable_->setCellWidget(row, 1, slider);
+        connect(slider, &QSlider::valueChanged, this,
+                [this, row, slider](int value) {
+                    // 拖动中不写；审查 M4：拖动释放不重发 valueChanged，
+                    // 须补 sliderReleased 写最终值。
+                    if (!slider->isSliderDown()) {
+                        applyAppVolume(row, value);
+                    }
+                });
+        connect(slider, &QSlider::sliderReleased, this,
+                [this, row, slider] {
+                    applyAppVolume(row, slider->value());
+                });
+        // 列 2：静音复选框。
+        auto* mute = new QCheckBox(QStringLiteral("静音"));
+        mute->setChecked(s.muted);
+        appStreamTable_->setCellWidget(row, 2, mute);
+        connect(mute, &QCheckBox::toggled, this,
+                [this, row](bool on) { toggleAppMute(row, on); });
+    }
+    appStreamStatus_->setText(streams.isEmpty()
+        ? QStringLiteral("（无活动应用）")
+        : QStringLiteral("%1 个应用正在播放").arg(streams.size()));
+}
+
+void SettingsWindow::applyAppVolume(int row, int value) {
+    const auto it = appRowIndex_.constFind(row);
+    if (it == appRowIndex_.constEnd() || audio_ == nullptr) {
+        return;
+    }
+    audio_->setAppVolume(it.value(), value);
+}
+
+void SettingsWindow::toggleAppMute(int row, bool muted) {
+    const auto it = appRowIndex_.constFind(row);
+    if (it == appRowIndex_.constEnd() || audio_ == nullptr) {
+        return;
+    }
+    audio_->setAppMuted(it.value(), muted);
 }
 
 void SettingsWindow::onAudioSinksReady(const QList<SinkInfo>& sinks) {

@@ -27,6 +27,8 @@ extern "C" {
 
 #include "ipc/config.h"
 #include "ipc/shortcuts.h"
+#include "ipc/windowrules.h"
+#include "ipc/nightlight.h"
 #include "ipc/theme.h"
 
 #include <memory>
@@ -41,6 +43,8 @@ namespace w10de {
 struct CompositorOptions {
     int width = 1920;              // headless 输出宽度（其他后端忽略）
     int height = 1080;             // headless 输出高度（其他后端忽略）
+    int outputs = 1;               // headless 输出数量（KDE-GAP 中优先 #5：
+                                   // 多显示器排列 headless 验证用）
     int frames = 0;                // 渲染帧数后退出（0 = 无限运行；仅 headless 冒烟用）
     std::string screenshotPath;    // 截图输出路径，空则跳过截图验证
     std::string socketName;        // 固定 Wayland socket 名（会话启动用）；空则自动生成
@@ -62,6 +66,10 @@ struct CompositorOptions {
     int snaplayoutTestFrame = 0;
     // 快捷键验证用：打印 [shortcuts] 生效绑定后退出（无需启动后端）。
     bool shortcutsDump = false;
+    // 窗口规则验证用（KDE-GAP 中优先 #6）：打印 [window_rules] 解析结果后退出。
+    bool windowRulesDump = false;
+    // Night Light 算法验证用（低优先）：打印 <temp>K gamma 表采样后退出。
+    int nightlightTestTemp = 0;
 };
 
 class Output;
@@ -98,6 +106,16 @@ public:
     const Theme& theme() const { return theme_; }
     // 快捷键绑定（init 时从 [shortcuts] 段加载；Seat 查表分发）。
     const std::vector<ShortcutBinding>& shortcuts() const { return shortcuts_; }
+    // 窗口规则（KDE-GAP 中优先 #6：init 时从 [window_rules] 段加载；
+    // View::applyRules 在 map 时匹配）。
+    const std::vector<w10de::ipc::WindowRule>& windowRules() const {
+        return windowRules_;
+    }
+    // Night Light（低优先：夜间色温）——启动/定时/新输出时应用。
+    // force=true：跳过状态去重（热插拔新输出必须拿到 gamma LUT）。
+    void applyNightLight(bool force = false);
+    bool nightLightActive() const { return nightLightActive_; }
+    wl_event_source* nightLightTimer() const { return nightLightTimer_; }
     // 输出列表（显示设置 D-Bus 服务遍历用）。
     const std::vector<std::unique_ptr<Output>>& outputs() const { return outputs_; }
     // 按名字找输出（D-Bus SetMode/SetScale/SetPosition 用）；未找到返回 nullptr。
@@ -237,6 +255,13 @@ private:
     std::unique_ptr<CompositorDbus> dbus_;
     // 快捷键绑定（[shortcuts] 配置段，第二批快捷键配置化）。
     std::vector<ShortcutBinding> shortcuts_;
+    // 窗口规则（KDE-GAP 中优先 #6）。
+    std::vector<w10de::ipc::WindowRule> windowRules_;
+    // Night Light（低优先）：配置 + 当前生效状态 + 每分钟检查 timer。
+    w10de::ipc::NightLightConfig nightLight_;
+    bool nightLightActive_ = false;
+    bool appliedOnce_ = false;  // 首次应用已完成（跳过无变化判断）
+    wl_event_source* nightLightTimer_ = nullptr;
     std::vector<View*> views_;
     std::vector<XView*> xviews_;
     std::vector<LayerSurface*> layerSurfaces_;  // 所有权为自身（destroy 回调 delete this）

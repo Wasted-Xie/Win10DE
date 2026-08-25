@@ -211,14 +211,22 @@ void Output::handleFrame() {
 
     const int limit = compositor_.options().frames;
     if (limit > 0 && framesRendered_ >= limit) {
-        int exitCode = 0;
-        if (!compositor_.options().screenshotPath.empty()) {
-            if (!takeScreenshot(compositor_.options().screenshotPath)) {
-                exitCode = 1;
+        // 审查 M3（多显示器排列）：每输出独立计帧，若各自执行截图会
+        // 竞态双写同一路径 + 重复 terminate——仅第一个输出截图并终止。
+        if (compositor_.firstOutput() == output_) {
+            int exitCode = 0;
+            if (!compositor_.options().screenshotPath.empty()) {
+                if (!takeScreenshot(compositor_.options().screenshotPath)) {
+                    exitCode = 1;
+                }
             }
+            compositor_.setExitCode(exitCode);
+            wl_display_terminate(compositor_.display());
+        } else {
+            // 非首个输出达限：继续排帧等待主输出 terminate（terminate
+            // 后事件循环退出，本输出即停）。
+            wlr_output_schedule_frame(output_);
         }
-        compositor_.setExitCode(exitCode);
-        wl_display_terminate(compositor_.display());
         return;
     }
     // 请求下一帧：headless 后端无垂直同步（frame timer 仅在 enable commit

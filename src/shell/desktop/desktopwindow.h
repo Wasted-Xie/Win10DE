@@ -10,6 +10,10 @@
 #include <QStringList>
 #include <QWidget>
 
+#include <memory>
+
+#include "shell/desktop/desktopwidgets.h"  // 桌面小部件（时钟/系统信息）
+
 class QListView;
 class QFileSystemModel;
 class QModelIndex;  // openItem 参数（const 引用，前向声明足够）
@@ -20,7 +24,9 @@ namespace w10de {
 class DesktopWindow : public QWidget {
     Q_OBJECT
 public:
-    explicit DesktopWindow(QWidget* parent = nullptr);
+    // configPath：配置文件（[widgets] 段控制小部件显示）；空则用默认。
+    explicit DesktopWindow(const QString& configPath = QString(),
+                           QWidget* parent = nullptr);
 
     // 设置壁纸；path 为空时使用默认渐变壁纸。设置后停止幻灯片。
     void setWallpaper(const QString& path);
@@ -46,6 +52,7 @@ private:
     QListView* iconList_ = nullptr;
     QFileSystemModel* iconModel_ = nullptr;
     QTimer* slideshowTimer_ = nullptr;
+    std::unique_ptr<DesktopWidgets> widgets_;  // 桌面小部件（中优先 #7）
     QStringList slideshowFiles_;  // 排序后的图片路径
     int slideshowIndex_ = 0;
 };

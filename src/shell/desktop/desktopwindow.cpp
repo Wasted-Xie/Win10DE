@@ -27,7 +27,8 @@ QString desktopDirectory() {
 
 }  // namespace
 
-DesktopWindow::DesktopWindow(QWidget* parent) : QWidget(parent) {
+DesktopWindow::DesktopWindow(const QString& configPath, QWidget* parent)
+    : QWidget(parent) {
     // 桌面图标（左上角浮动区域，透明背景；绝对定位覆盖在壁纸上）。
     iconList_ = new QListView(this);
     iconList_->setViewMode(QListView::IconMode);
@@ -65,6 +66,11 @@ DesktopWindow::DesktopWindow(QWidget* parent) : QWidget(parent) {
 
     connect(iconList_, &QListView::doubleClicked,
             this, &DesktopWindow::openItem);
+
+    // 桌面小部件（KDE-GAP 中优先 #7：时钟右上 + 系统信息左上；
+    // [widgets] 段控制显示）。
+    widgets_ = std::make_unique<DesktopWidgets>(
+        this, loadWidgetsConfig(configPath.toStdString()));
 
     setWallpaper(QString());
 }
@@ -178,6 +184,10 @@ void DesktopWindow::paintEvent(QPaintEvent* /*event*/) {
 void DesktopWindow::resizeEvent(QResizeEvent* event) {
     QWidget::resizeEvent(event);
     updateWallpaperScaled();
+    // 小部件跟随桌面尺寸重定位（中优先 #7）。
+    if (widgets_ != nullptr) {
+        widgets_->reposition(width(), height());
+    }
 }
 
 void DesktopWindow::updateWallpaperScaled() {

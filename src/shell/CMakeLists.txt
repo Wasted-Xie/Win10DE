@@ -30,6 +30,7 @@ add_executable(w10shell
     main.cpp
     theme/colors.cpp
     desktop/desktopwindow.cpp
+    desktop/desktopwidgets.cpp
     taskbar/taskbarwindow.cpp
     taskbar/clock.cpp
     taskbar/startbutton.cpp

@@ -155,7 +155,8 @@ int main(int argc, char* argv[]) {
     }
 
     // ---- 桌面（background 层，全屏；不接收键盘输入）----
-    w10de::DesktopWindow desktop;
+    // configPath 传入：桌面小部件（[widgets] 段）读取同一配置（中优先 #7）。
+    w10de::DesktopWindow desktop(configPath);
     configureLayerWindow(&desktop, QStringLiteral("w10de-desktop"),
                          LayerShellQt::Window::LayerBackground,
                          LayerShellQt::Window::Anchors(

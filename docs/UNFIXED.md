@@ -8,24 +8,18 @@
 
 ## 1. 功能未实现（KDE-GAP 差距剩余）
 
-### 1.1 中优先（常用生产力，4 项）
+### 1.1 中优先（常用生产力）
 
-| 项 | 对标 | 当前状态 | 建议切入点 |
-|----|------|----------|-----------|
-| 每应用音量 | KDE 每应用音量（pipewire 节点级） | 未开始。w10settings"音频"页仅全局输出/音量/静音（libpulse） | 用 PulseAudio 的 sink-input 枚举（libpulse `pa_context_get_sink_input_info_list`）列出各应用流 + 音量滑块；或走 PipeWire 原生 API |
-| 多显示器图形排列 GUI | KDE System Settings 显示器图形拖拽 | 未开始。仅下拉选择输出/分辨率/缩放/位置（`org.w10de.Compositor` SetPosition 已可设坐标） | Qt 自绘显示器矩形缩略图 + 拖拽更新位置（复用 SetPosition）；多输出 headless 验证需 `--outputs` 多输出测试参数 |
-| 窗口规则 | KWin Window Rules（按类/标题强制属性） | 未开始。compositor 无规则引擎 | `[window_rules]` 配置段（match: app_id/title + action: 无边框/置顶/固定工作区/初始几何）+ View 创建时应用；真机验证 |
-| 桌面小部件 | Plasma 桌面部件 | 未开始。桌面仅图标列表（M4 desktopwindow） | 最轻量：桌面快捷方式小组件（时钟/系统信息），复用背景层 + LayerShellQt；复杂部件需拖放框架，优先级低 |
+**全部 7 项完成 ✅**（输入设备设置、文本/PDF/图像查看器、回收站窗口、每应用音量、多显示器图形排列 GUI、窗口规则、桌面小部件）。
 
-### 1.2 低优先（锦上添花，5 项）
+### 1.2 低优先（锦上添花，4 项）
 
 | 项 | 对标 | 状态 |
 |----|------|------|
-| KWin 特效/脚本 | 最小化动画/桌面立方体/KWin Scripts | 未开始（已有窗口移动/贴靠动画） |
-| Night Light | KDE 夜间色温 | 未开始（compositor gamma 控制 + 定时） |
-| 全局菜单 | KDE Global Menu（菜单栏上移） | 未开始（需要 appmenu 协议 + 客户端配合） |
-| KWallet | KDE 密码库 | 未开始（无加密存储需求，暂缓） |
-| 登录管理器 | SDDM 等价 | 未开始（系统层，超出桌面环境范围） |
+| KWin 特效/脚本 | 最小化动画/桌面立方体/KWin Scripts | 部分完成（打开淡入 + 还原淡入 ✅）；**其余特效不做**：最小化淡出需延迟隐藏（fade 完成前窗口滞留，最小化→还原竞态，风险/收益低）；桌面立方体需 3D 变换（scene 无节点变换）；KWin Scripts 需 QJSEngine 脚本框架（工程量大） |
+| 全局菜单 | KDE Global Menu（菜单栏上移） | **MVP 不做**——依赖客户端 DBusMenu（com.canonical.dbusmenu）导出 + appmenu 协议配合（Qt 应用默认不导出菜单），无客户端配合不可行；留待生态成熟 |
+| KWallet | KDE 密码库 | **MVP 不做**——Win10DE 无密码存储消费方（无浏览器/邮件客户端集成）；D-Bus org.kde.KWallet 服务 + 加密存储工程量大，无实际需求 |
+| 登录管理器 | SDDM 等价 | **不做**——系统层（显示管理器/会话选择），超出桌面环境范围（Win10DE 是会话内环境，非发行版登录栈） |
 
 ---
 
@@ -84,6 +78,8 @@
 | # | 模块 | 问题 | 级别 |
 |---|------|------|------|
 | O1 | w10term | ANSI 追加模式无光标移动（简化），部分 TUI（vim/htop 全屏）显示异常 | L |
+| O2 | 默认应用 | 仅管理 3 类（浏览器/邮件/文件管理器），查看器/终端等类型未入设置页（w10viewer.desktop 的 MimeType 需手动或后续扩展） | L |
+| O3 | 每应用音量 | 滑块拖动→音量变化为真机交互验证项（headless 端到端已验证枚举与显示；Qt 滑块释放丢最终值缺陷已修（sliderReleased），写链路代码经审查）；sink-input 无 Pulse 事件订阅（subscribe），流增删/音量变化需手动刷新 | 真机项 |
 | O2 | 默认应用 | 仅管理 3 类（浏览器/邮件/文件管理器），查看器/终端等类型未入设置页（w10viewer.desktop 的 MimeType 需手动或后续扩展） | L |
 | O3 | w10explorer | 删除进回收站仅主回收站（~/.local/share/Trash），系统分区顶层回收站（/.Trash-<uid>）与跨设备删除不支持（QFile::rename EXDEV 不上报成功） | R |
 | O4 | 窗口 | Alt+Tab/任务栏对 Wayland 激活置前（activateWindow）受 xdg-activation token 限制，部分场景无法真置前 | R |
