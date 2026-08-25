@@ -129,7 +129,9 @@ Linux 上的 Windows 10 风格桌面环境，从零实现。
        精确匹配、失败提示时序）+ **D-Bus mock 端到端验证 PASS**（Qt 注册假
        Bluez/NetworkManager 到 system bus：NET 连接+IP 192.168.1.100、
        BT 适配器+设备解析全过）；headless 渲染 PASS；真机需 NetworkManager/
-       Bluez 验证真实连接）——**第三批 5 项全部完成**
+       Bluez 验证真实连接）——**第三批 5 项全部完成**；后续对标 KDE 的差距
+       清单见 [docs/KDE-GAP.md](docs/KDE-GAP.md)（按类别+优先级：软件中心/
+       进程管理/Snap 布局/锁屏密码/文件索引为高优先）
 - [x] 编译与冒烟验证（headless 运行 + 截图 + 像素校验，2026-08 Arch/WSL2 通过）
 - [x] 完整渲染验证（compositor + w10shell 同跑：桌面壁纸渐变 + 任务栏渲染成功，2026-08）
 - [ ] 真机/嵌套环境验证（DRM、XWayland 运行时、鼠标键盘实际交互）

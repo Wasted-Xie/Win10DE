@@ -398,5 +398,8 @@ WLR_BACKEND=wayland ./build/src/compositor/w10compositor --frames 0
 - **验证脚本**（Windows 侧 `%TEMP%`，经 `/mnt/c/Users/Administrator/AppData/Local/Temp/` 在 WSL 执行）：`w10de-title.sh`（标题栏白字/红钮）、`w10de-ws.sh`（多工作区 4 场景）、`w10de-narrow.sh`（窄窗口）、`w10de-shadow.sh`（阴影）、`w10de-snap.sh`（Snap）、`w10de-alttab.sh`（Alt+Tab）、`w10de-search-render.sh`（开始菜单搜索框）、`w10de-notify4.sh`（通知弹窗：gdbus 触发 + 像素校验；**注意 kill shell 必须在 wait compositor 之后**，否则截图时层表面已销毁、画面纯壁纸——此前多次误判渲染失败即此因）、`w10de-clipboard.sh`（剪贴板历史：selftest + 面板渲染；**headless 需显式启动 dbus-daemon 且触发前轮询 org.w10de.Shell 注册**）、`w10de-syncbuild.sh`（同步+编译）、`w10de-shot-dbg.sh`（截图工具：纯壁纸全蓝校验；**pkill 禁用 -f 匹配命令行**——会误杀外层 bash，用 pkill -x）、`w10de-shot-window.sh`（截图工具：设置窗口多色）、`w10de-monitor-render.sh`（监视器渲染）、`w10de-calc-render.sh`（计算器渲染）、`w10de-slideshow3.sh`（壁纸幻灯片三连拍红→绿；**interval=8s + hide/show 强制重绘**）、`w10de-netbt-render.sh`（网络/蓝牙页渲染）、`w10de-pngcheck.py`（PNG 采样分析）、`w10de-batch3-regress.sh`（第三批汇总回归）。
 - **wlroots 头文件无 extern "C" 保护**：C++ 引用必须手动包裹；不稳定接口需要 `WLR_USE_UNSTABLE`。
 - **先读**：本文档 → `docs/ARCHITECTURE.md` → `README.md` → 相关源码，再改代码。
+- **KDE 差距分析**：`docs/KDE-GAP.md`（2026-08 生成）——按类别/优先级列出未实现功能
+  （高优先：软件中心、进程管理器、Snap 布局选择器、锁屏密码 PAM、文件索引搜索），
+  后续功能补全立项以此为基准。
 - **不要**重新核对已确认的 API（见第 4 节决策表与源码注释中的"已确认"标注）；新增 wlr_* 调用时对照 `third_party/wlroots/include/`。
 - **维护规则（用户明确要求）**：**每次完成任务/里程碑时，更新 `README.md` 的同时必须同步更新本文档**（状态表、文件清单、决策、已知问题、下一步）。本文档不是一次性的——它随项目演进持续维护，任何"进行中"状态必须在每次交接时准确反映。若 README 有变更而本文档未同步，视为交接不完整。
