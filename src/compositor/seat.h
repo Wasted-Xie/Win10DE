@@ -17,7 +17,11 @@ extern "C" {
 
 #include <xkbcommon/xkbcommon.h>
 
+#include <memory>
 #include <set>
+
+#include "compositor/alttab.h"
+#include "ipc/shortcuts.h"
 
 namespace w10de {
 
@@ -51,6 +55,10 @@ public:
     // 键盘焦点到任意 surface（layer surface 用）；layerSurface 非空时
     // 所有窗口失活（层表面如开始菜单获得输入）。
     void focusSurface(wlr_surface* surface, bool deactivateViews);
+    // 当前键盘焦点 surface（层表面 unmap 补偿用；无焦点返回 nullptr）。
+    wlr_surface* keyboardFocusedSurface() const {
+        return seat_ != nullptr ? seat_->keyboard_state.focused_surface : nullptr;
+    }
     // 若键盘焦点在该 surface 上则清除（窗口 unmap 时用）。
     void unfocusSurface(wlr_surface* surface);
     // 清空全部焦点（键盘+指针），锁屏等场景用。
@@ -61,6 +69,8 @@ public:
     void onXViewDestroyed(XView* view);
     // M2b hover 打磨：更新装饰按钮悬停高亮。
     void updateHover();
+    // headless 验证（--alttab-test）：显示切换器（不应用选择）。
+    void debugShowAltTab();
 
     wlr_seat* seat() const { return seat_; }
 
@@ -96,6 +106,8 @@ private:
     void processCursorButton(uint32_t timeMsec, uint32_t button,
                              enum wl_pointer_button_state state);
     void processKey(uint32_t timeMsec, uint32_t keycode, wl_keyboard_key_state state);
+    // 快捷键动作分发（[shortcuts] 配置驱动，第二批）。
+    void dispatchShortcut(ShortcutAction action);
 
     Compositor& compositor_;
     wlr_seat* seat_ = nullptr;
@@ -108,6 +120,8 @@ private:
     View* hoverView_ = nullptr;
     // M7 续：当前 hover 的 XWayland 视图（装饰按钮高亮跟踪）。
     XView* hoverXView_ = nullptr;
+    // Alt+Tab 窗口切换器（Win10 风格）。
+    std::unique_ptr<AltTabSwitcher> alttab_;
     // 已转发 press 的按键（按 button 跟踪，release 只转发有对应 press 的
     // 按键，避免"幽灵 release"；标题栏/空白处吞掉的 press 不在此集合）。
     std::set<uint32_t> pressedButtons_;

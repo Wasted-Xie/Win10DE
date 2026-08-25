@@ -4,15 +4,19 @@
 #include <algorithm>
 #include <cstdlib>  // free / getenv / strcmp
 #include <cstring>
+#include <sys/wait.h>  // waitpid（toggleClipboardHistory 中间子进程回收）
 #include <unistd.h>  // fork / execlp / setsid
 
 extern "C" {
 #include <wlr/backend/headless.h>
+#include <wlr/types/wlr_data_device.h>
+#include <wlr/types/wlr_screencopy_v1.h>
 #include <wlr/types/wlr_subcompositor.h>
 }
 
 #include "compositor/output.h"
 #include "compositor/layer_shell.h"
+#include "compositor/dbus_service.h"
 #include "compositor/seat.h"
 #include "compositor/view.h"
 #include "compositor/xview.h"
@@ -94,6 +98,9 @@ bool Compositor::init() {
     } else {
         theme_ = darkTheme();
     }
+
+    // 快捷键绑定：从 [shortcuts] 段加载（未配置项保持默认；第二批）。
+    shortcuts_ = loadShortcuts(Config::load(options_.configPath));
 
     // 启动工作区（M7 续；View 构造时读取 currentWorkspace_ 作为归属）。
     currentWorkspace_ = options_.initialWorkspace;
@@ -196,6 +203,13 @@ bool Compositor::init() {
         wlr_log(WLR_ERROR, "failed to create wl_subcompositor");
         return false;
     }
+    // wl_data_device_manager：跨客户端剪贴板/拖放（wl_data_source 交换）。
+    // M1 起 seat 已处理 request_set_selection，但缺少管理器客户端无法
+    // 创建 data device——复制粘贴在客户端间实际不工作（剪贴板历史依赖）。
+    if (wlr_data_device_manager_create(display_) == nullptr) {
+        wlr_log(WLR_ERROR, "failed to create data-device manager");
+        return false;
+    }
 
     // 输出布局：多输出的 2D 坐标空间；scene 输出位置随之同步。
     outputLayout_ = wlr_output_layout_create(display_);
@@ -230,6 +244,12 @@ bool Compositor::init() {
     layerShell_ = wlr_layer_shell_v1_create(display_, 4);
     if (layerShell_ == nullptr) {
         wlr_log(WLR_ERROR, "failed to create layer-shell");
+        return false;
+    }
+
+    // wlr-screencopy：截图工具协议（第三批；客户端 capture 输出 → shm）。
+    if (wlr_screencopy_manager_v1_create(display_) == nullptr) {
+        wlr_log(WLR_ERROR, "failed to create screencopy manager");
         return false;
     }
 
@@ -285,6 +305,14 @@ bool Compositor::init() {
     if (!wlr_backend_start(backend_)) {
         wlr_log(WLR_ERROR, "failed to start backend");
         return false;
+    }
+
+    // ---- D-Bus 服务（org.w10de.Compositor：显示设置 IPC，第二批）----
+    // 需要 display 与事件循环就绪；失败降级（设置应用显示模块不可用）。
+    dbus_ = std::make_unique<CompositorDbus>(*this);
+    if (!dbus_->init()) {
+        wlr_log(WLR_ERROR, "compositor dbus service unavailable (display settings disabled)");
+        dbus_.reset();
     }
     return true;
 }
@@ -521,6 +549,16 @@ wlr_output* Compositor::firstOutput() const {
     return outputs_.empty() ? nullptr : outputs_.front()->wlr();
 }
 
+wlr_output* Compositor::findOutputByName(const std::string& name) const {
+    for (const auto& out : outputs_) {
+        wlr_output* o = out->wlr();
+        if (o != nullptr && o->name != nullptr && name == o->name) {
+            return o;
+        }
+    }
+    return nullptr;
+}
+
 // ---- 事件回调 ----
 
 void Compositor::handleNewOutput(wl_listener* listener, void* data) {
@@ -740,6 +778,38 @@ void Compositor::launchLockScreen() {
     } else {
         wlr_log(WLR_INFO, "launched lock screen (pid %d)", pid);
     }
+}
+
+void Compositor::toggleClipboardHistory() {
+    // Win+V：经 D-Bus 通知 w10shell 切换剪贴板历史面板。shell 是
+    // org.w10de.Shell 服务的持有者（/Clipboard 对象，ClipboardService）。
+    // 用 dbus-send（最通用的 CLI）异步触发；失败仅记日志不阻塞（面板
+    // 不可用是可接受的降级，锁屏触发同款 fork 模式）。
+    // double-fork：孙进程 exec dbus-send 并由 init 收养，中间进程立即
+    // _exit(0) 由父进程 waitpid 回收——避免僵尸进程累积（审查 M3；
+    // 不用 SIGCHLD handler，避免与 wlroots XWayland reaper 冲突）。
+    const pid_t pid = fork();
+    if (pid == 0) {
+        const pid_t grand = fork();
+        if (grand < 0) {
+            _exit(127);
+        }
+        if (grand > 0) {
+            _exit(0);  // 中间子进程：父进程 waitpid 回收。
+        }
+        setsid();
+        execlp("dbus-send", "dbus-send", "--session",
+               "--dest=org.w10de.Shell", "/Clipboard",
+               "org.w10de.Clipboard.ToggleClipboardHistory", nullptr);
+        _exit(127);
+    }
+    if (pid < 0) {
+        wlr_log(WLR_ERROR, "failed to fork dbus-send for clipboard toggle");
+        return;
+    }
+    int status = 0;
+    waitpid(pid, &status, 0);  // 回收中间子进程（孙进程已脱离）。
+    wlr_log(WLR_INFO, "clipboard history toggle requested (pid %d)", pid);
 }
 
 void Compositor::handleNewLock(wl_listener* listener, void* data) {

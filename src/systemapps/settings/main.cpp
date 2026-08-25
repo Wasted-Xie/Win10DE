@@ -11,7 +11,12 @@
 #include <QFile>
 #include <QTextStream>
 
+#include <cstdio>  // setvbuf（日志无缓冲）
+
 #include "systemapps/appipc.h"
+#include "systemapps/settings/audioinfo.h"
+#include "systemapps/settings/defaultapps.h"
+#include "systemapps/settings/powerinfo.h"
 #include "systemapps/settings/settingswindow.h"
 #include "theme/colors.h"
 
@@ -82,6 +87,85 @@ int runSelfTest(const QString& baseDir) {
         return fail(QStringLiteral("文件内容保序/保留失败"));
     }
     out << "OK config read/write\n";
+
+    // 4) 电源信息（sysfs 电池/背光；WSL 有虚拟 BAT1，真机有真实电池）。
+    const w10de::settings::BatteryInfo bat = w10de::settings::PowerInfo::battery();
+    if (bat.present) {
+        // percent 允许 -1（无 capacity 驱动的设备——审查 L9 放宽）。
+        if (bat.percent < -1 || bat.percent > 100) {
+            return fail(QStringLiteral("电池电量越界 %1").arg(bat.percent));
+        }
+        if (bat.status.isEmpty()) {
+            return fail(QStringLiteral("电池状态为空"));
+        }
+        out << "OK battery: " << bat.device.toUtf8() << " "
+            << bat.percent << "% " << bat.status.toUtf8() << "\n";
+    } else {
+        out << "OK battery: none\n";
+    }
+    const w10de::settings::BacklightInfo bl = w10de::settings::PowerInfo::backlight();
+    if (bl.present && (bl.maxBrightness <= 0 || bl.brightness < 0 ||
+            bl.brightness > bl.maxBrightness)) {
+        return fail(QStringLiteral("背光亮度越界"));
+    }
+    out << (bl.present ? "OK backlight: " : "OK backlight: none")
+        << (bl.present ? bl.device.toUtf8() : QByteArray()) << "\n";
+
+    // 5) 音量换算（pa_volume 0..0x10000 → 0-100）。
+    if (w10de::settings::AudioInfo::paVolumeToPercent(0) != 0) {
+        return fail(QStringLiteral("paVolumeToPercent(0) != 0"));
+    }
+    if (w10de::settings::AudioInfo::paVolumeToPercent(0x8000) != 50) {
+        return fail(QStringLiteral("paVolumeToPercent(0x8000) != 50"));
+    }
+    if (w10de::settings::AudioInfo::paVolumeToPercent(0x10000) != 100) {
+        return fail(QStringLiteral("paVolumeToPercent(0x10000) != 100"));
+    }
+    out << "OK volume-convert\n";
+
+    // 6) 默认应用 mimeapps.list 读写（保留注释/其他段）。
+    const QString mimeapps = baseDir + QStringLiteral("/mimeapps.list");
+    {
+        QFile f(mimeapps);
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            return fail(QStringLiteral("写预置 mimeapps 失败"));
+        }
+        QTextStream ts(&f);
+        ts << "# test\n"
+           << "[Added Associations]\n"
+           << "text/html=old.desktop\n";
+    }
+    {
+        auto defaults = w10de::settings::DefaultApps::loadMimeDefaults(mimeapps);
+        if (!defaults.isEmpty()) {
+            return fail(QStringLiteral("空段不应有内容"));
+        }
+        defaults.insert(QStringLiteral("x-scheme-handler/http"), QStringLiteral("firefox.desktop"));
+        defaults.insert(QStringLiteral("inode/directory"), QStringLiteral("w10explorer.desktop"));
+        if (!w10de::settings::DefaultApps::saveMimeDefaults(mimeapps, defaults)) {
+            return fail(QStringLiteral("保存 mimeapps 失败"));
+        }
+        const auto reread = w10de::settings::DefaultApps::loadMimeDefaults(mimeapps);
+        if (reread.value(QStringLiteral("x-scheme-handler/http"))
+                != QStringLiteral("firefox.desktop")) {
+            return fail(QStringLiteral("http 默认未保存"));
+        }
+        if (reread.value(QStringLiteral("inode/directory"))
+                != QStringLiteral("w10explorer.desktop")) {
+            return fail(QStringLiteral("文件管理器默认未保存"));
+        }
+        QFile rf(mimeapps);
+        if (!rf.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            return fail(QStringLiteral("读回 mimeapps 失败"));
+        }
+        const QString content = QString::fromUtf8(rf.readAll());
+        if (!content.contains(QStringLiteral("# test")) ||
+                !content.contains(QStringLiteral("[Added Associations]")) ||
+                !content.contains(QStringLiteral("[Default Applications]"))) {
+            return fail(QStringLiteral("mimeapps 保序/保留失败"));
+        }
+    }
+    out << "OK mimeapps-defaults\n";
     out << "SELFTEST PASS\n";
     return 0;
 }
@@ -89,6 +173,10 @@ int runSelfTest(const QString& baseDir) {
 }  // namespace
 
 int main(int argc, char* argv[]) {
+    // 日志即时可见（重定向到文件时 stderr 全缓冲，kill 丢日志——w10term
+    // 调试教训同款）。
+    std::setvbuf(stderr, nullptr, _IONBF, 0);
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     for (int i = 1; i < argc; ++i) {
         if (qstrcmp(argv[i], "--selftest") == 0) {
             qputenv("QT_QPA_PLATFORM", "offscreen");
@@ -135,5 +223,10 @@ int main(int argc, char* argv[]) {
 
     w10de::settings::SettingsWindow window;
     window.show();
+    // --page <name>：启动即切到指定分类页（headless 渲染验证用）。
+    const int pageIdx = args.indexOf(QStringLiteral("--page"));
+    if (pageIdx >= 0 && pageIdx + 1 < args.size()) {
+        window.selectCategory(args.at(pageIdx + 1));
+    }
     return QApplication::exec();
 }

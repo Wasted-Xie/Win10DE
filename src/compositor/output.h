@@ -35,17 +35,21 @@ public:
 private:
     // 输出 frame 事件：渲染 scene 一帧，按需截图并终止事件循环。
     void handleFrame();
+    // 输出 commit（mode/scale/位置热应用）：同步背景矩形（审查 M1）。
+    void handleCommit();
     // 渲染一帧到输出 state 的 buffer，读回像素写 PNG，并验证中心像素
     // 为背景色（Win10 蓝），作为渲染管线工作的证据。
     bool takeScreenshot(const std::string& path);
 
     static void handleFrameThunk(wl_listener* listener, void* data);
+    static void handleCommitThunk(wl_listener* listener, void* data);
 
     Compositor& compositor_;
     wlr_output* output_ = nullptr;
     wlr_scene_output* sceneOutput_ = nullptr;
     wlr_scene_rect* backgroundRect_ = nullptr;  // Win10 蓝背景（每输出一个）
     wl_listener frameListener_ = {};
+    wl_listener commitListener_ = {};
     int framesRendered_ = 0;
 };
 

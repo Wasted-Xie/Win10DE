@@ -543,6 +543,13 @@ void Seat::processCursorMotion(uint32_t timeMsec) {
     // 发送，此处不再单独发送，避免每批事件出现两个 frame。
 }
 
+void Seat::debugShowAltTab() {
+    if (alttab_ == nullptr) {
+        alttab_ = std::make_unique<AltTabSwitcher>(compositor_);
+    }
+    alttab_->show();
+}
+
 void Seat::updateHover() {
     // 命中最上层窗口的装饰区；非按钮区域（标题栏空白/内容区）清除高亮。
     // overlay/top 层表面（开始菜单等）遮挡窗口时不高亮被盖住的按钮：
@@ -805,96 +812,140 @@ void Seat::processKey(uint32_t timeMsec, uint32_t keycode, wl_keyboard_key_state
     const xkb_keysym_t sym = xkb_state_key_get_one_sym(keyboard_->xkb_state, xkbKeycode);
     const uint32_t mods = wlr_keyboard_get_modifiers(keyboard_);
 
+    // ---- Alt+Tab 窗口切换（Win10 语义）----
+    const bool isAlt = sym == XKB_KEY_Alt_L || sym == XKB_KEY_Alt_R;
     if (state == WL_KEYBOARD_KEY_STATE_PRESSED) {
-        // Win10 风格快捷键（Win = LOGO 修饰键）。
-        // 审查：仅纯 LOGO 组合（排除 Shift/Ctrl/Alt，避免 Win+Shift+← 等
-        // 未实现语义误触发）。
-        const bool pureLogo = (mods & WLR_MODIFIER_LOGO) &&
-            !(mods & (WLR_MODIFIER_SHIFT | WLR_MODIFIER_CTRL | WLR_MODIFIER_ALT));
-        if (sym == XKB_KEY_q && pureLogo) {
-            if (focusedView_ != nullptr) {
-                wlr_log(WLR_INFO, "shortcut: close focused view");
-                focusedView_->close();
+        // Alt 按下后 Tab/Shift+Tab 循环切换（不转发给客户端）。
+        if (sym == XKB_KEY_Tab && (mods & WLR_MODIFIER_ALT)) {
+            if (alttab_ == nullptr) {
+                alttab_ = std::make_unique<AltTabSwitcher>(compositor_);
             }
-            return;  // 快捷键不转发给客户端
-        }
-        if (sym == XKB_KEY_Escape && pureLogo) {
-            wlr_log(WLR_INFO, "shortcut: quit compositor");
-            wl_display_terminate(compositor_.display());
-            return;
-        }
-        if (sym == XKB_KEY_f && pureLogo) {
-            if (focusedView_ != nullptr) {
-                focusedView_->setMaximized(!focusedView_->maximized());
+            if (!alttab_->active()) {
+                alttab_->show();
+            } else if (mods & WLR_MODIFIER_SHIFT) {
+                alttab_->prev();
+            } else {
+                alttab_->next();
             }
             return;
         }
-        // M8 Aero Snap：Win+←/→ 左/右半屏，Win+↑ 最大化，Win+↓ 还原。
-        if (sym == XKB_KEY_Left && pureLogo) {
-            if (focusedView_ != nullptr) {
-                // 已在左半屏时再按则还原（Win10 行为：半屏 ↔ 浮动）。
-                if (focusedView_->snapEdge() == SnapEdge::Left) {
-                    focusedView_->unsnap();
-                } else {
-                    focusedView_->snapTo(SnapEdge::Left);
-                }
+    } else if (state == WL_KEYBOARD_KEY_STATE_RELEASED && isAlt) {
+        // 松开 Alt：应用切换结果。
+        if (alttab_ != nullptr && alttab_->active()) {
+            alttab_->hideAndApply();
+        }
+    }
+
+    if (state == WL_KEYBOARD_KEY_STATE_PRESSED) {
+        // 快捷键分发（[shortcuts] 配置驱动，第二批）：匹配当前按键的
+        // 修饰组合 + 键名 → 动作。修饰键精确匹配（仅该组合，不含其他
+        // 修饰——等价原 pureLogo 语义并支持 ctrl/alt/shift 组合）。
+        // 0xFD = LOGO|CTRL|ALT|SHIFT|MOD2|MOD3|MOD5（wlr 位；审查 M1：
+        // 不含 CAPS(0x02)——当前 wlroots 0.19 get_modifiers 只返回
+        // depressed|latched 不含 locked，CAPS 不参与匹配；显式列出避免
+        // 升级隐患与错误注释）。
+        const uint32_t modMask = 0xFD;
+        const auto& bindings = compositor_.shortcuts();
+        for (int a = 0; a < static_cast<int>(ShortcutAction::Count); ++a) {
+            const ShortcutBinding& b = bindings[static_cast<size_t>(a)];
+            if (!b.valid()) {
+                continue;
             }
-            return;
-        }
-        if (sym == XKB_KEY_Right && pureLogo) {
-            if (focusedView_ != nullptr) {
-                if (focusedView_->snapEdge() == SnapEdge::Right) {
-                    focusedView_->unsnap();
-                } else {
-                    focusedView_->snapTo(SnapEdge::Right);
-                }
-            }
-            return;
-        }
-        if (sym == XKB_KEY_Up && pureLogo) {
-            if (focusedView_ != nullptr) {
-                focusedView_->setMaximized(true);
-            }
-            return;
-        }
-        if (sym == XKB_KEY_Down && pureLogo) {
-            if (focusedView_ != nullptr) {
-                // 最大化 → 还原；贴边 → 还原（Win10 Win+↓ 语义）。
-                if (focusedView_->isFullAreaLayout()) {
-                    if (focusedView_->maximized()) {
-                        focusedView_->setMaximized(false);
-                    } else {
-                        focusedView_->unsnap();
-                    }
-                }
-            }
-            return;
-        }
-        if (sym == XKB_KEY_m && pureLogo) {
-            if (focusedView_ != nullptr) {
-                focusedView_->setMinimized(!focusedView_->minimized());
-            }
-            return;
-        }
-        if (sym == XKB_KEY_l && pureLogo) {
-            wlr_log(WLR_INFO, "shortcut: lock screen (Win+L)");
-            compositor_.launchLockScreen();
-            return;
-        }
-        // M7 续：Win+1..4 切换工作区（对应 kWorkspaceCount 个虚拟桌面）。
-        static const struct { xkb_keysym_t sym; int ws; } kWorkspaceKeys[] = {
-            {XKB_KEY_1, 0}, {XKB_KEY_2, 1}, {XKB_KEY_3, 2}, {XKB_KEY_4, 3},
-        };
-        for (const auto& wk : kWorkspaceKeys) {
-            if (sym == wk.sym && pureLogo) {
-                wlr_log(WLR_INFO, "shortcut: switch to workspace %d", wk.ws);
-                compositor_.switchWorkspace(wk.ws);
-                return;
+            // 键符匹配：shift+字母 配置（如 "shift+a"）时 xkb 返回大写
+            // 键符（XKB_KEY_A），统一转小写比较（审查 L1；符号键如
+            // shift+1→'!' 不在键名表内，默认绑定无 shift 组合）。
+            const xkb_keysym_t lowered = xkb_keysym_to_lower(sym);
+            if ((sym == b.sym || lowered == b.sym) &&
+                    (mods & modMask) == b.mods) {
+                dispatchShortcut(static_cast<ShortcutAction>(a));
+                return;  // 快捷键不转发给客户端
             }
         }
     }
 
     wlr_seat_keyboard_notify_key(seat_, timeMsec, keycode, state);
+}
+
+// 快捷键动作分发（配置驱动后的动作实现；与原硬编码行为一致）。
+void Seat::dispatchShortcut(ShortcutAction action) {
+    switch (action) {
+    case ShortcutAction::Close:
+        wlr_log(WLR_INFO, "shortcut: close focused view");
+        if (focusedView_ != nullptr) {
+            focusedView_->close();
+        }
+        break;
+    case ShortcutAction::Maximize:
+        if (focusedView_ != nullptr) {
+            focusedView_->setMaximized(!focusedView_->maximized());
+        }
+        break;
+    case ShortcutAction::Minimize:
+        if (focusedView_ != nullptr) {
+            focusedView_->setMinimized(!focusedView_->minimized());
+        }
+        break;
+    case ShortcutAction::SnapLeft:
+        if (focusedView_ != nullptr) {
+            // 已在左半屏时再按则还原（Win10 行为：半屏 ↔ 浮动）。
+            if (focusedView_->snapEdge() == SnapEdge::Left) {
+                focusedView_->unsnap();
+            } else {
+                focusedView_->snapTo(SnapEdge::Left);
+            }
+        }
+        break;
+    case ShortcutAction::SnapRight:
+        if (focusedView_ != nullptr) {
+            if (focusedView_->snapEdge() == SnapEdge::Right) {
+                focusedView_->unsnap();
+            } else {
+                focusedView_->snapTo(SnapEdge::Right);
+            }
+        }
+        break;
+    case ShortcutAction::SnapUp:
+        if (focusedView_ != nullptr) {
+            focusedView_->setMaximized(true);
+        }
+        break;
+    case ShortcutAction::SnapDown:
+        if (focusedView_ != nullptr) {
+            // 最大化 → 还原；贴边 → 还原（Win10 Win+↓ 语义）。
+            if (focusedView_->isFullAreaLayout()) {
+                if (focusedView_->maximized()) {
+                    focusedView_->setMaximized(false);
+                } else {
+                    focusedView_->unsnap();
+                }
+            }
+        }
+        break;
+    case ShortcutAction::Lock:
+        wlr_log(WLR_INFO, "shortcut: lock screen");
+        compositor_.launchLockScreen();
+        break;
+    case ShortcutAction::Quit:
+        wlr_log(WLR_INFO, "shortcut: quit compositor");
+        wl_display_terminate(compositor_.display());
+        break;
+    case ShortcutAction::Clipboard:
+        wlr_log(WLR_INFO, "shortcut: clipboard history");
+        compositor_.toggleClipboardHistory();
+        break;
+    case ShortcutAction::Workspace1:
+    case ShortcutAction::Workspace2:
+    case ShortcutAction::Workspace3:
+    case ShortcutAction::Workspace4: {
+        const int ws = static_cast<int>(action) -
+            static_cast<int>(ShortcutAction::Workspace1);
+        wlr_log(WLR_INFO, "shortcut: switch to workspace %d", ws);
+        compositor_.switchWorkspace(ws);
+        break;
+    }
+    default:
+        break;
+    }
 }
 
 // ---- 剪贴板 ----

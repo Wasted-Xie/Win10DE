@@ -42,7 +42,13 @@ add_executable(w10shell
     tray/trayicon.cpp
     tray/trayarea.cpp
     ipc/lockservice.cpp
+    ipc/clipboardservice.cpp
     ipc/foreigntoplevel.cpp
+    ipc/notificationservice.cpp
+    notification/notificationpopup.cpp
+    notification/notificationcenter.cpp
+    clipboard/clipboardhistory.cpp
+    clipboard/clipboardpanel.cpp
     ${CMAKE_SOURCE_DIR}/src/ipc/config.cpp
     ${CMAKE_SOURCE_DIR}/src/ipc/theme.cpp
     ${FOREIGN_TOPLEVEL_SRC}

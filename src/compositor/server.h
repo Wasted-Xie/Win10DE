@@ -26,6 +26,7 @@ extern "C" {
 }
 
 #include "ipc/config.h"
+#include "ipc/shortcuts.h"
 #include "ipc/theme.h"
 
 #include <memory>
@@ -52,6 +53,13 @@ struct CompositorOptions {
     std::vector<std::pair<int, int>> workspaceSwitches;
     // M8 验证用：首个窗口 map 后自动贴左半屏（验证 Aero Snap 几何/动画）。
     bool snapTest = false;
+    // Alt+Tab 验证用：渲染到指定帧时显示切换器（headless 截图验证 UI）。
+    int alttabTestFrame = 0;
+    // 剪贴板历史验证用：渲染到指定帧时触发 Win+V 面板
+    // （headless 截图验证面板渲染；经 D-Bus 通知 shell）。
+    int clipboardTestFrame = 0;
+    // 快捷键验证用：打印 [shortcuts] 生效绑定后退出（无需启动后端）。
+    bool shortcutsDump = false;
 };
 
 class Output;
@@ -59,6 +67,7 @@ class Seat;
 class View;
 class LayerSurface;
 class XView;
+class CompositorDbus;
 
 // wlroots compositor 生命周期：display / backend / renderer / allocator /
 // scene / xdg-shell / seat，以及视图列表管理。
@@ -85,6 +94,12 @@ public:
     const CompositorOptions& options() const { return options_; }
     // 当前主题（init 时从配置 [theme] 段加载；窗口装饰/背景色用）。
     const Theme& theme() const { return theme_; }
+    // 快捷键绑定（init 时从 [shortcuts] 段加载；Seat 查表分发）。
+    const std::vector<ShortcutBinding>& shortcuts() const { return shortcuts_; }
+    // 输出列表（显示设置 D-Bus 服务遍历用）。
+    const std::vector<std::unique_ptr<Output>>& outputs() const { return outputs_; }
+    // 按名字找输出（D-Bus SetMode/SetScale/SetPosition 用）；未找到返回 nullptr。
+    wlr_output* findOutputByName(const std::string& name) const;
 
     // ---- 视图列表管理（z 序：末尾为最上层）----
     const std::vector<View*>& views() const { return views_; }
@@ -159,6 +174,8 @@ public:
     void setSessionLocked(bool locked);
     // 启动锁屏进程（Win+L 快捷键触发；fork/exec w10lock）。
     void launchLockScreen();
+    // Win+V：通知 shell 切换剪贴板历史面板（D-Bus org.w10de.Clipboard）。
+    void toggleClipboardHistory();
 
     // 由输出帧逻辑设置最终退出码（如截图验证失败）。
     void setExitCode(int code) { exitCode_ = code; }
@@ -214,6 +231,10 @@ private:
     bool sessionLocked_ = false;
     std::unique_ptr<Seat> seat_;
     std::vector<std::unique_ptr<Output>> outputs_;
+    // D-Bus 服务（org.w10de.Compositor：输出管理，第二批显示设置用）。
+    std::unique_ptr<CompositorDbus> dbus_;
+    // 快捷键绑定（[shortcuts] 配置段，第二批快捷键配置化）。
+    std::vector<ShortcutBinding> shortcuts_;
     std::vector<View*> views_;
     std::vector<XView*> xviews_;
     std::vector<LayerSurface*> layerSurfaces_;  // 所有权为自身（destroy 回调 delete this）

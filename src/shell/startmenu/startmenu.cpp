@@ -4,10 +4,12 @@
 #include <QDBusInterface>
 #include <QDesktopServices>
 #include <QDir>
+#include <QDirIterator>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
 #include <QProcess>
@@ -133,6 +135,25 @@ StartMenu::StartMenu(QWidget* parent) : QWidget(parent) {
     ll->setContentsMargins(0, 0, 0, 0);
     ll->setSpacing(0);
 
+    // 顶部搜索框（Win10 开始菜单搜索 / KRunner 语义）。
+    searchBox_ = new QLineEdit(listHost);
+    searchBox_->setPlaceholderText(QStringLiteral("搜索应用和文件…"));
+    searchBox_->setStyleSheet(QStringLiteral(
+        "QLineEdit {"
+        "  background: %1;"
+        "  color: %2;"
+        "  border: 1px solid %3;"
+        "  padding: 6px 8px;"
+        "  margin: 6px;"
+        "  font-size: 13px;"
+        "}")
+        .arg(theme::kTaskbarBackground().name(),
+             theme::kTextPrimary().name(),
+             theme::kHoverBackground().name()));
+    connect(searchBox_, &QLineEdit::textChanged,
+            this, &StartMenu::onSearchChanged);
+    ll->addWidget(searchBox_);
+
     appList_ = new QListWidget(listHost);
     appList_->setStyleSheet(QStringLiteral(
         "QListWidget {"
@@ -214,8 +235,9 @@ QToolButton* StartMenu::makeSideButton(const QString& iconName,
 void StartMenu::toggle() {
     setVisible(!isVisible());
     if (isVisible()) {
-        // 显示后请求键盘焦点（overlay 层已配置 keyboard-interactivity）。
-        appList_->setFocus();
+        // 显示后聚焦搜索框（Win10：打开开始菜单可直接输入搜索）。
+        searchBox_->setFocus();
+        searchBox_->selectAll();
         raise();
         activateWindow();
     }
@@ -293,6 +315,13 @@ void StartMenu::launchApplication(QListWidgetItem* item) {
     if (exec.isEmpty()) {
         return;
     }
+    // 搜索文件结果："file:<path>" → 系统默认方式打开。
+    if (exec.startsWith(QStringLiteral("file:"))) {
+        QDesktopServices::openUrl(
+            QUrl::fromLocalFile(exec.mid(5)));
+        hide();
+        return;
+    }
     // 分离式启动，不阻塞 shell。
     const QStringList parts = QProcess::splitCommand(sanitizeExec(exec));
     if (parts.isEmpty()) {
@@ -302,7 +331,79 @@ void StartMenu::launchApplication(QListWidgetItem* item) {
     hide();  // 启动后收起开始菜单
 }
 
-void StartMenu::rebuildAppList() {
+bool StartMenu::appMatches(const AppEntry& app, const QString& keyword) {
+    if (keyword.isEmpty()) {
+        return true;
+    }
+    return app.name.contains(keyword, Qt::CaseInsensitive) ||
+           app.exec.contains(keyword, Qt::CaseInsensitive);
+}
+
+QStringList StartMenu::searchFiles(const QString& keyword) const {
+    QStringList out;
+    if (keyword.isEmpty()) {
+        return out;
+    }
+    const QString home =
+        QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
+    if (home.isEmpty()) {
+        return out;
+    }
+    // 递归主目录（数量上限兜底，避免大目录卡 UI）。
+    constexpr int kMaxResults = 15;
+    QDirIterator it(home,
+                    QDir::Files | QDir::NoDotAndDotDot | QDir::Hidden,
+                    QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        it.next();
+        if (it.fileName().contains(keyword, Qt::CaseInsensitive)) {
+            out.append(it.filePath());
+            if (out.size() >= kMaxResults) {
+                break;
+            }
+        }
+    }
+    return out;
+}
+
+void StartMenu::onSearchChanged(const QString& text) {
+    const QString keyword = text.trimmed();
+    searchActive_ = !keyword.isEmpty();
+    appList_->clear();
+    if (!searchActive_) {
+        rebuildAppList();
+        tilesHost_->setVisible(true);
+        return;
+    }
+    // 搜索模式：应用过滤 + 文件搜索混合结果（磁贴区隐藏）。
+    tilesHost_->setVisible(false);
+    for (const AppEntry& app : appEntries_) {
+        if (!appMatches(app, keyword)) {
+            continue;
+        }
+        auto* row = new QListWidgetItem(app.name);
+        row->setData(Qt::UserRole, app.exec);
+        row->setToolTip(app.name);
+        appList_->addItem(row);
+    }
+    const QStringList files = searchFiles(keyword);
+    for (const QString& path : files) {
+        auto* row = new QListWidgetItem(
+            QIcon::fromTheme(QStringLiteral("text-x-generic")),
+            path);
+        row->setData(Qt::UserRole, QStringLiteral("file:") + path);
+        row->setToolTip(path);
+        appList_->addItem(row);
+    }
+    if (appList_->count() == 0) {
+        auto* empty = new QListWidgetItem(
+            QStringLiteral("没有找到 \"%1\"").arg(keyword));
+        empty->setFlags(Qt::NoItemFlags);
+        appList_->addItem(empty);
+    }
+}
+
+void StartMenu::rebuildAppList(const QString& filter) {
     appList_->clear();
     // 清空磁贴流（FlowLayout takeAt 删除 item 与 widget）。
     if (auto* flow = qobject_cast<FlowLayout*>(tilesHost_->layout())) {
@@ -312,8 +413,14 @@ void StartMenu::rebuildAppList() {
         }
     }
     tiles_.clear();
-    const QList<AppEntry> apps = scanDesktopApplications();
-    for (const AppEntry& app : apps) {
+    // 首次调用时缓存扫描结果（搜索过滤复用）。
+    if (appEntries_.isEmpty()) {
+        appEntries_ = scanDesktopApplications();
+    }
+    for (const AppEntry& app : appEntries_) {
+        if (!appMatches(app, filter)) {
+            continue;
+        }
         // 应用列表列：文本行（Win10 全部应用）。
         auto* row = new QListWidgetItem(app.name);
         row->setData(Qt::UserRole, app.exec);

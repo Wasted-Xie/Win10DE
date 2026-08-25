@@ -1,7 +1,10 @@
 #include "compositor/layer_shell.h"
 #include "compositor/util.h"
 
+#include <cstring>  // strcmp（剪贴板面板 scope 匹配）
+
 #include "compositor/server.h"
+#include "compositor/seat.h"
 
 namespace w10de {
 
@@ -82,18 +85,37 @@ void LayerSurface::handleDestroy(wl_listener* listener, void* /*data*/) {
 void LayerSurface::handleMap(wl_listener* listener, void* /*data*/) {
     auto* self = W10DE_CONTAINER_OF(listener, LayerSurface, map_);
     const char* ns = self->layer_->namespace_ != nullptr ? self->layer_->namespace_ : "";
-    wlr_log(WLR_INFO, "layer surface mapped: '%s' layer=%d", ns,
-            static_cast<int>(self->layer_->current.layer));
+    wlr_log(WLR_INFO, "layer surface mapped: '%s' layer=%d size=%dx%d",
+            ns, static_cast<int>(self->layer_->current.layer),
+            self->layer_->current.desired_width,
+            self->layer_->current.desired_height);
     // 挂到对应层锚：background/bottom 在窗口下，top/overlay 在窗口上。
     wlr_scene_node_reparent(&self->sceneLayer_->tree->node,
         self->compositor_.layerAnchor(
             static_cast<int>(self->layer_->current.layer)));
     // map 后实际尺寸确定，重排（可能影响独占区/其他层）。
     self->compositor_.arrangeLayers();
+    // 剪贴板历史面板（Win+V）：map 即把键盘焦点交给它——layer-shell
+    // on_demand 交互需要 compositor 显式 notify_enter，否则 Esc/方向键/
+    // Enter 仍派发给原聚焦窗口（审查 M2）。
+    if (ns != nullptr && std::strcmp(ns, "w10de-clipboard") == 0) {
+        if (Seat* seat = self->compositor_.seat(); seat != nullptr) {
+            wlr_log(WLR_INFO, "clipboard panel mapped: granting keyboard focus");
+            seat->focusSurface(self->layer_->surface, true);
+        }
+    }
 }
 
 void LayerSurface::handleUnmap(wl_listener* listener, void* /*data*/) {
     auto* self = W10DE_CONTAINER_OF(listener, LayerSurface, unmap_);
+    // 键盘焦点补偿：获得过焦点的层表面（剪贴板面板/开始菜单等）隐藏时
+    // 把焦点还给当前工作区顶层窗口（无窗口则清焦点）——否则焦点悬空在
+    // 已 unmap 的 surface 上（启动时剪贴板面板初始 map→hide 同路径）。
+    if (Seat* seat = self->compositor_.seat();
+            seat != nullptr &&
+            seat->keyboardFocusedSurface() == self->layer_->surface) {
+        self->compositor_.focusWorkspaceTop(self->compositor_.currentWorkspace());
+    }
     self->compositor_.arrangeLayers();
 }
 

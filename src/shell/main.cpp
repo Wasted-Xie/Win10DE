@@ -6,18 +6,30 @@
 // 运行前提：Wayland 合成器（w10compositor）支持 wlr-layer-shell 协议。
 
 #include <QApplication>
+#include <QClipboard>
 #include <QCommandLineParser>
 #include <QDBusConnection>
 #include <QDir>
 #include <QMargins>
+#include <QShortcut>
+#include <QTimer>
+#include <QVariant>
 #include <QWindow>
+
+#include <cstdio>  // setvbuf（日志无缓冲）
 
 #include <LayerShellQt/Shell>
 #include <LayerShellQt/Window>
 
 #include "desktop/desktopwindow.h"
+#include "ipc/clipboardservice.h"
 #include "ipc/config.h"
 #include "ipc/lockservice.h"
+#include "ipc/notificationservice.h"
+#include "clipboard/clipboardhistory.h"
+#include "clipboard/clipboardpanel.h"
+#include "notification/notificationcenter.h"
+#include "notification/notificationpopup.h"
 #include "startmenu/startmenu.h"
 #include "taskbar/startbutton.h"
 #include "taskbar/taskbarwindow.h"
@@ -54,6 +66,10 @@ void configureLayerWindow(QWidget* widget, const QString& scope,
 }  // namespace
 
 int main(int argc, char* argv[]) {
+    // 日志即时可见（重定向到文件时 stderr 全缓冲，kill 会丢日志——壁纸
+    // 幻灯片调试实测：advance 后 paint 日志丢失导致误判未重绘）。
+    std::setvbuf(stderr, nullptr, _IONBF, 0);
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("w10shell"));
     app.setApplicationDisplayName(QStringLiteral("Win10DE Shell"));
@@ -71,6 +87,17 @@ int main(int argc, char* argv[]) {
                                     QStringLiteral("配置文件路径（缺省 ~/.config/w10de/config.ini）"),
                                     QStringLiteral("path"));
     parser.addOption(configOption);
+    // 测试辅助：
+    // --clipboard-seed：启动时预置 2 条剪贴板历史种子（headless 渲染验证
+    //   面板"有条目"状态；真实复制内容来自系统剪贴板）。
+    QCommandLineOption clipboardSeedOption(QStringLiteral("clipboard-seed"),
+                                           QStringLiteral("测试：预置剪贴板历史种子"));
+    parser.addOption(clipboardSeedOption);
+    // --clipboard-selftest：剪贴板历史逻辑自测（去重/上限/类型），
+    // 通过退出码 0，失败 1（headless 验证用）。
+    QCommandLineOption clipboardSelftestOption(QStringLiteral("clipboard-selftest"),
+                                               QStringLiteral("测试：剪贴板历史逻辑自测"));
+    parser.addOption(clipboardSelftestOption);
     parser.process(app);
 
     // 启用 layer-shell 支持（必须在使用任何 layer-shell 窗口前调用）。
@@ -84,6 +111,49 @@ int main(int argc, char* argv[]) {
     }
     w10de::theme::loadFromConfig(configPath.toStdString());
 
+    // ---- 剪贴板历史逻辑自测（headless 验证：--clipboard-selftest）----
+    if (parser.isSet(clipboardSelftestOption)) {
+        bool ok = true;
+        auto check = [&ok](bool cond, const char* what) {
+            if (!cond) {
+                ok = false;
+                qWarning("clipboard selftest FAIL: %s", what);
+            }
+        };
+        w10de::ClipboardHistory h;
+        check(h.isEmpty(), "initial empty");
+        h.addText(QStringLiteral("alpha"));
+        check(h.count() == 1, "one text entry");
+        h.addText(QStringLiteral("alpha"));
+        check(h.count() == 1, "dedupe identical text");
+        h.addText(QStringLiteral("beta"));
+        check(h.count() == 2, "second distinct text");
+        check(!h.entries().first().isImage, "text entry flagged text");
+        h.addImage(QImage(8, 8, QImage::Format_ARGB32));
+        check(h.count() == 3, "image entry appended");
+        check(h.entries().first().isImage, "newest is image");
+        // QVariant 往返（面板 QListWidgetItem 数据通路；缺 metatype 时
+        // fromValue 产生无效 QVariant，canConvert 恒 false——S1 回归防护）。
+        const QVariant roundTrip = QVariant::fromValue(h.entries().first());
+        check(roundTrip.canConvert<w10de::ClipboardEntry>(), "variant round-trip");
+        check(roundTrip.value<w10de::ClipboardEntry>().isImage, "variant value intact");
+        // 写回非最近条目：全表去重应移到顶部而不产生重复（M1）。
+        h.addText(QStringLiteral("alpha"));
+        check(h.count() == 3, "re-add older entry deduped");
+        check(h.entries().first().text == QStringLiteral("alpha"), "older entry moved to top");
+        for (int i = 0; i < 30; ++i) {
+            h.addText(QStringLiteral("bulk-%1").arg(i));
+        }
+        check(h.count() == h.maxEntries(), "capped at max entries");
+        check(!h.entries().first().text.isEmpty(), "newest survives trim");
+        // 30 次追加后保留 bulk-29..bulk-10（20 条）；起始 3 条（img/beta/alpha）
+        // 在第 18/19/20 次追加时被逐出，最旧剩余为 bulk-10。
+        check(h.entries().last().text == QStringLiteral("bulk-10"),
+              "oldest beyond cap evicted");
+        qInfo("clipboard selftest: %s", ok ? "PASS" : "FAIL");
+        return ok ? 0 : 1;
+    }
+
     // ---- 桌面（background 层，全屏；不接收键盘输入）----
     w10de::DesktopWindow desktop;
     configureLayerWindow(&desktop, QStringLiteral("w10de-desktop"),
@@ -95,13 +165,28 @@ int main(int argc, char* argv[]) {
                                  LayerShellQt::Window::AnchorBottom),
                          0, QMargins(),
                          LayerShellQt::Window::KeyboardInteractivityNone);
-    // 壁纸：--wallpaper 优先，否则读配置 [wallpaper] path；都没有则用内置渐变。
-    QString wallpaper = parser.value(wallpaperOption);
-    if (wallpaper.isEmpty()) {
-        const w10de::Config config = w10de::Config::load(configPath.toStdString());
-        wallpaper = QString::fromStdString(config.get("wallpaper", "path"));
+    // 壁纸优先级（审查 S1：--wallpaper / slideshow_dir / path 独立判断，
+    // 不可合并短路——否则 path 存在时幻灯片永不启动）：
+    //   1) --wallpaper CLI 显式指定
+    //   2) [wallpaper] slideshow_dir（幻灯片，按 slideshow_interval 秒轮换，默认 60）
+    //   3) [wallpaper] path 单张
+    //   4) 都没有 → 内置渐变
+    const w10de::Config config = w10de::Config::load(configPath.toStdString());
+    const QString cliWallpaper = parser.value(wallpaperOption);
+    const QString cfgPath = QString::fromStdString(config.get("wallpaper", "path"));
+    const QString slideshowDir =
+        QString::fromStdString(config.get("wallpaper", "slideshow_dir"));
+    const int slideshowInterval =
+        config.getInt("wallpaper", "slideshow_interval", 60);
+    if (!cliWallpaper.isEmpty()) {
+        desktop.setWallpaper(cliWallpaper);
+    } else if (!slideshowDir.isEmpty()) {
+        desktop.setSlideshow(slideshowDir, slideshowInterval);
+    } else if (!cfgPath.isEmpty()) {
+        desktop.setWallpaper(cfgPath);
+    } else {
+        desktop.setWallpaper(QString());
     }
-    desktop.setWallpaper(wallpaper);
 
     // ---- 任务栏（bottom 层，底部全宽 + 独占区）----
     w10de::TaskbarWindow taskbar;
@@ -134,14 +219,106 @@ int main(int argc, char* argv[]) {
     QObject::connect(taskbar.startButton(), &w10de::StartButton::startMenuRequested,
                      &startMenu, &w10de::StartMenu::toggle);
 
-    // ---- D-Bus 会话服务（org.w10de.Shell：Lock 等）----
+    // ---- 通知（org.freedesktop.Notifications 标准服务 + 弹窗 + 历史）----
+    w10de::NotificationService notificationService;
+    w10de::NotificationPopup popup;
+    w10de::NotificationCenter center;
+    // 弹窗：右下角 overlay；历史：右下角 overlay（比弹窗稍靠上，宽 380）。
+    configureLayerWindow(&popup, QStringLiteral("w10de-notification"),
+                         LayerShellQt::Window::LayerOverlay,
+                         LayerShellQt::Window::Anchors(
+                             LayerShellQt::Window::AnchorRight |
+                                 LayerShellQt::Window::AnchorBottom),
+                         0, QMargins(0, 0, 8, w10de::theme::kTaskbarHeight + 8),
+                         LayerShellQt::Window::KeyboardInteractivityNone);
+    configureLayerWindow(&center, QStringLiteral("w10de-notification-center"),
+                         LayerShellQt::Window::LayerOverlay,
+                         LayerShellQt::Window::Anchors(
+                             LayerShellQt::Window::AnchorRight |
+                                 LayerShellQt::Window::AnchorBottom),
+                         0, QMargins(0, 0, 8, w10de::theme::kTaskbarHeight + 8),
+                         LayerShellQt::Window::KeyboardInteractivityOnDemand);
+    popup.hide();
+    center.hide();
+    // 新通知 → 弹窗显示 + 定时隐藏；点击弹窗 → 打开历史中心。
+    QObject::connect(&notificationService,
+                     &w10de::NotificationService::notificationReceived,
+                     &popup, &w10de::NotificationPopup::showNotification);
+    QObject::connect(&popup, &w10de::NotificationPopup::clicked, [&]() {
+        popup.hide();
+        center.refresh(notificationService.history());
+        center.show();
+        center.raise();
+    });
+    // 弹窗 5 秒后自动消失（Win10 语义）。
+    auto* popupTimer = new QTimer(&popup);
+    popupTimer->setSingleShot(true);
+    popupTimer->setInterval(5000);
+    QObject::connect(&notificationService,
+                     &w10de::NotificationService::notificationReceived,
+                     popupTimer, qOverload<>(&QTimer::start));
+    QObject::connect(popupTimer, &QTimer::timeout, &popup, &QWidget::hide);
+    // 点击历史外部（Esc）关闭中心：给中心设关闭快捷键。
+    auto* closeCenter = new QShortcut(QKeySequence(QStringLiteral("Escape")), &center);
+    QObject::connect(closeCenter, &QShortcut::activated, &center, &QWidget::hide);
+
+    // ---- 剪贴板历史（Win10 Win+V：监听系统剪贴板 + 历史面板）----
+    w10de::ClipboardHistory clipboardHistory;
+    w10de::ClipboardPanel clipboardPanel;
+    configureLayerWindow(&clipboardPanel, QStringLiteral("w10de-clipboard"),
+                         LayerShellQt::Window::LayerOverlay,
+                         LayerShellQt::Window::Anchors(
+                             LayerShellQt::Window::AnchorRight |
+                                 LayerShellQt::Window::AnchorBottom),
+                         0, QMargins(0, 0, 8, w10de::theme::kTaskbarHeight + 8),
+                         LayerShellQt::Window::KeyboardInteractivityOnDemand);
+    clipboardPanel.hide();
+    // 测试种子：--clipboard-seed 预置条目（验证面板"有条目"渲染）。
+    if (parser.isSet(clipboardSeedOption)) {
+        clipboardHistory.addText(QStringLiteral("seeded clipboard text A"));
+        clipboardHistory.addText(QStringLiteral("seeded clipboard text B"));
+    }
+    // Win+V（compositor → D-Bus）→ 切换面板；显示时刷新为最新历史。
+    w10de::ClipboardService clipboardService;
+    QObject::connect(&clipboardService, &w10de::ClipboardService::toggleRequested,
+                     [&]() {
+        if (clipboardPanel.isVisible()) {
+            clipboardPanel.hide();
+        } else {
+            clipboardPanel.setHistory(clipboardHistory.entries());
+            clipboardPanel.showPanel();
+        }
+    });
+    // 选中条目 → 写回系统剪贴板（Win10 语义：成为当前剪贴板，供 Ctrl+V
+    // 粘贴；写回触发 dataChanged 由历史去重吸收，不产生新条目）。
+    QObject::connect(&clipboardPanel, &w10de::ClipboardPanel::entryPicked,
+                     [&](const w10de::ClipboardEntry& e) {
+        if (e.isImage) {
+            QApplication::clipboard()->setImage(e.image);
+        } else {
+            QApplication::clipboard()->setText(e.text);
+        }
+    });
+    // 面板显示期间历史变化 → 实时刷新。
+    QObject::connect(&clipboardHistory, &w10de::ClipboardHistory::historyChanged,
+                     [&]() {
+        if (clipboardPanel.isVisible()) {
+            clipboardPanel.setHistory(clipboardHistory.entries());
+        }
+    });
+
+    // ---- D-Bus 会话服务（org.w10de.Shell：Lock / Clipboard 等）----
     // 外部触发锁屏：dbus-send --session --dest=org.w10de.Shell /Shell org.w10de.Shell.Lock
-    // LockService 须在 app.exec() 期间存活（栈上声明于本作用域）。
+    // 外部触发剪贴板面板：dbus-send --session --dest=org.w10de.Shell /Clipboard org.w10de.Clipboard.ToggleClipboardHistory
+    // LockService/ClipboardService 须在 app.exec() 期间存活（栈上声明于本作用域）。
     w10de::LockService lockService;
     if (QDBusConnection::sessionBus().registerService(
             QStringLiteral("org.w10de.Shell"))) {
         QDBusConnection::sessionBus().registerObject(
             QStringLiteral("/Shell"), &lockService,
+            QDBusConnection::ExportAllSlots);
+        QDBusConnection::sessionBus().registerObject(
+            QStringLiteral("/Clipboard"), &clipboardService,
             QDBusConnection::ExportAllSlots);
     } else {
         qWarning("w10shell: failed to register D-Bus service org.w10de.Shell");

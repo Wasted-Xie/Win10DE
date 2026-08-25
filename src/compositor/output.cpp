@@ -10,6 +10,7 @@
 #include <stb_image_write.h>
 
 #include "compositor/server.h"
+#include "compositor/seat.h"
 
 namespace w10de {
 
@@ -122,17 +123,46 @@ Output::Output(Compositor& compositor, wlr_output* output)
     frameListener_.notify = handleFrameThunk;
     wl_signal_add(&output_->events.frame, &frameListener_);
 
+    // 输出 commit 监听：mode/scale/位置热应用后同步背景矩形（审查 M1——
+    // 否则 SetMode 放大分辨率/SetPosition 移动后背景矩形小于输出，露出
+    // 未绘制区域；scene 输出尺寸/位置自动跟随，但背景矩形需手动更新）。
+    commitListener_.notify = handleCommitThunk;
+    wl_signal_add(&output_->events.commit, &commitListener_);
+
     wlr_log(WLR_INFO, "output '%s' configured: %dx%d at (%d,%d)", output_->name,
             output_->width, output_->height, lx, ly);
 }
 
 Output::~Output() {
     wl_list_remove(&frameListener_.link);
+    wl_list_remove(&commitListener_.link);
 }
 
 void Output::handleFrameThunk(wl_listener* listener, void* /*data*/) {
     auto* output = W10DE_CONTAINER_OF(listener, Output, frameListener_);
     output->handleFrame();
+}
+
+void Output::handleCommitThunk(wl_listener* listener, void* /*data*/) {
+    auto* output = W10DE_CONTAINER_OF(listener, Output, commitListener_);
+    output->handleCommit();
+}
+
+void Output::handleCommit() {
+    if (backgroundRect_ == nullptr) {
+        return;
+    }
+    // 背景矩形铺满新有效分辨率，位置跟随布局坐标。
+    int w = 0, h = 0;
+    wlr_output_effective_resolution(output_, &w, &h);
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+    wlr_scene_rect_set_size(backgroundRect_, w, h);
+    wlr_box box{};
+    wlr_output_layout_get_box(compositor_.outputLayout(), output_, &box);
+    if (box.width != 0 || box.height != 0) {
+        wlr_scene_node_set_position(&backgroundRect_->node, box.x, box.y);
+    }
 }
 
 void Output::handleFrame() {
@@ -148,6 +178,21 @@ void Output::handleFrame() {
         if (framesRendered_ == frame) {
             compositor_.switchWorkspace(workspace);
         }
+    }
+    // Alt+Tab 验证：指定帧显示切换器（headless 截图验证 UI）。
+    if (compositor_.options().alttabTestFrame > 0 &&
+            framesRendered_ == compositor_.options().alttabTestFrame &&
+            compositor_.seat() != nullptr) {
+        compositor_.seat()->debugShowAltTab();
+    }
+    // 剪贴板历史验证：指定帧触发 Win+V 面板（headless 截图验证 UI）。
+    // 多输出时各输出帧号独立，用进程级标志保证只触发一次（审查 L5）。
+    static bool clipboardTestFired = false;
+    if (compositor_.options().clipboardTestFrame > 0 &&
+            framesRendered_ == compositor_.options().clipboardTestFrame &&
+            !clipboardTestFired) {
+        clipboardTestFired = true;
+        compositor_.toggleClipboardHistory();
     }
     // M8：推进窗口动画一帧（Snap/还原平滑移动）。
     // 审查：仅第一个输出推进，多输出时动画速度不随输出数翻倍

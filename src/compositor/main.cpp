@@ -15,6 +15,7 @@
 
 #include "compositor/server.h"
 #include "ipc/config.h"
+#include "ipc/shortcuts.h"
 
 namespace {
 
@@ -31,6 +32,9 @@ void printUsage(const char* prog) {
         "  --workspace <n>     启动工作区 0-3（默认 0；M7 多工作区）\n"
         "  --switch-ws <f>:<n> 渲染到第 f 帧时切换到工作区 n（可重复；headless 验证用）\n"
         "  --snap-test         每个窗口 map 后自动贴左半屏（M8 Aero Snap 验证）\n"
+        "  --alttab-test <f>   渲染到第 f 帧时显示 Alt+Tab 切换器（headless 验证）\n"
+        "  --clipboard-test <f> 渲染到第 f 帧时触发剪贴板历史面板（Win+V，headless 验证）\n"
+        "  --shortcuts-dump    打印 [shortcuts] 配置生效的快捷键绑定后退出（验证用）\n"
         "  --verbose           输出调试日志\n"
         "  --help              显示本帮助\n"
         "环境变量：\n"
@@ -127,6 +131,12 @@ int main(int argc, char* argv[]) {
             opts.verbose = true;
         } else if (arg == "--snap-test") {
             opts.snapTest = true;
+        } else if (arg == "--alttab-test") {
+            opts.alttabTestFrame = parseInt("--alttab-test");
+        } else if (arg == "--clipboard-test") {
+            opts.clipboardTestFrame = parseInt("--clipboard-test");
+        } else if (arg == "--shortcuts-dump") {
+            opts.shortcutsDump = true;
         } else if (arg == "--help") {
             printUsage(argv[0]);
             return 0;
@@ -181,6 +191,20 @@ int main(int argc, char* argv[]) {
                 frame, opts.frames);
             return 1;
         }
+    }
+
+    // --shortcuts-dump：打印配置生效的快捷键绑定后退出（headless 验证：
+    // 不需要启动后端，仅解析配置）。
+    if (opts.shortcutsDump) {
+        const w10de::Config config = w10de::Config::load(opts.configPath);
+        const auto bindings = w10de::loadShortcuts(config);
+        for (int a = 0; a < static_cast<int>(w10de::ShortcutAction::Count); ++a) {
+            const auto& b = bindings[static_cast<size_t>(a)];
+            std::printf("%-12s mods=0x%02x sym=0x%04x%s\n",
+                        w10de::shortcutActionName(static_cast<w10de::ShortcutAction>(a)),
+                        b.mods, b.sym, b.valid() ? "" : " (invalid)");
+        }
+        return 0;
     }
 
     w10de::Compositor compositor(std::move(opts));

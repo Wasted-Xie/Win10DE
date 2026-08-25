@@ -69,6 +69,67 @@ Linux 上的 Windows 10 风格桌面环境，从零实现。
 - [x] **w10settings 设置中心**（参考 KDE System Settings：顶部搜索 + 左侧分类 + 右侧模块）：
       外观（主题深浅色/壁纸路径，写 config.ini）、系统（关于/开机自启开关）；Config 扩展
       写入（保留注释与顺序）；`--selftest` 配置读写 + headless 渲染 + 单实例验证通过（2026-08）
+- [ ] **功能补全（goal cd47bf3e，对标 KDE 差距分析）**：第一批 Alt+Tab 切换器 ✅、全局搜索 ✅
+      （开始菜单顶部搜索框：应用过滤 + 主目录文件搜索混合结果、文件系统默认打开、磁贴区隐藏；
+      渲染验证 PASS）、**通知中心 ✅**（`org.freedesktop.Notifications` 标准 D-Bus 服务 + 右下角
+      弹窗（360×100，5 秒自动隐藏、点击打开历史）+ 通知历史中心（380×480，Esc 关闭）；
+      gdbus 触发 + headless 渲染验证 PASS）、**剪贴板历史 ✅**（Win+V 语义：`ClipboardHistory`
+      监听系统剪贴板（文本/图片、去重、上限 20 条）+ overlay 历史面板（点击写回剪贴板、
+      Esc 关闭）+ Win+V 快捷键（compositor → D-Bus → shell）→ **终端 w10term ✅**（复用
+      systemapps 框架 + appipc 单实例 + PTY（forkpty + 非阻塞 master）+ ANSI 子集解析
+      （SGR 16 色/清屏）+ 按键转发 + `--selftest` 逻辑自测 + headless 渲染 + 单实例
+      D-Bus 激活验证 PASS）→ 第一批完成。**第二批显示设置 ✅**（compositor D-Bus 服务
+      `org.w10de.Compositor`/Outputs：GetOutputs/GetModes/SetMode/SetScale/SetPosition，
+      libdbus + wl_event_loop 集成 + wlroots 0.19 state API 热应用；w10settings"显示"模块：
+      输出/分辨率/缩放下拉 + 应用/刷新，`--page display` headless 验证 PASS：IPC 热应用
+      （SetScale 200→960x540）+ 渲染 PASS）→ **快捷键配置化 ✅**（`[shortcuts]` 配置段驱动
+      Seat 快捷键：`src/ipc/shortcuts.{h,cpp}` 解析 "win+q"/"ctrl+alt+l" 格式 + 14 动作
+      绑定（close/maximize/snap/lock/quit/clipboard/workspace_1-4；Alt+Tab 保持固定）；
+      processKey 查表分发（修饰组合精确匹配，支持 ctrl/alt/shift 组合）；`--shortcuts-dump`
+      验证：默认绑定与原硬编码一致、自定义（win+x/ctrl+f1）生效、非法回退默认）→ **电源管理
+      ✅**（`src/systemapps/settings/powerinfo.{h,cpp}`：sysfs 直读电池（/sys/class/power_supply
+      的 BAT*：capacity/status/energy_now，UPower 同源数据）与背光（max_brightness/brightness
+      读写）；w10settings"电源"模块：电池状态（电量%/充电状态/剩余）+ 亮度滑块（写回）；
+      `--selftest`（WSL 虚拟 BAT1：100% Full）PASS + `--page power` 渲染 PASS）→ **音频控制
+      ✅**（`src/systemapps/settings/audioinfo.{h,cpp}`：libpulse 客户端（pa_context API，
+      真机 pipewire-pulse 提供 Pulse 兼容服务；无服务时连接失败/超时兜底显示不可用）；
+      w10settings"音频"模块：输出设备下拉 + 音量滑块 + 静音；`--selftest` 音量换算断言 +
+      `--page audio` 渲染 PASS）→ **默认应用设置 ✅**（`src/systemapps/settings/defaultapps.{h,cpp}`：
+      xdg 标准 mimeapps.list（[Default Applications] 段：浏览器 http/https/html、邮件 mailto、
+      文件管理器 inode/directory），保留注释/其他段写入；.desktop 应用扫描；w10settings"默认
+      应用"模块：3 类别下拉 + 应用；`--selftest` mimeapps 读写断言 + `--page defaults` 渲染
+      PASS）——**第二批 5 项全部完成**；第三批生态：**截图工具 ✅**（`src/systemapps/screenshot/`：
+       wlr-screencopy 协议客户端 w10screenshot——registry 绑定 wl_shm +
+       zwlr_screencopy_manager_v1 + 首个 wl_output（bind v4 完整监听）；capture_output →
+       buffer 事件（格式用事件值创建 wl_shm buffer）→ copy → ready → XRGB/ARGB→RGBA
+       转换 + stbi 写 PNG；compositor 侧 server.cpp 注册
+       `wlr_screencopy_manager_v1_create`；修复：像素转换循环漏写 dst 递增导致截图仅
+       首列有内容；审查 S1/M1/L1-L5 修复（失败路径守卫/多输出选择/v3 buffer_done 时序/
+       fd 泄漏/alpha 保留/超时兜底）；headless 验证 PASS：纯壁纸全蓝 + 设置窗口内容
+       多色正确截取）→ **系统监视器 ✅**（`src/systemapps/monitor/`：Win10 任务管理器
+       风格——CPU 使用率曲线（自绘 60 点滚动）+ 每核进度条 + 内存（含 swap）+ 磁盘
+       读写/网络收发速率；数据源纯 /proc（/proc/stat、/proc/meminfo、/proc/net/dev、
+       /proc/diskstats，增量速率计算）；`--selftest` PASS（WSL 24 核/内存 9.7%）+
+       headless 渲染 PASS（深色面板 + 白字 + 进度条））→ **计算器 ✅**（`src/systemapps/calculator/`：
+       Win10 标准计算器——深色主题、即时计算状态机（操作符先结算积压再记录）、
+       % 双语义（无操作符=自身/100，有操作符=acc×v/100）、÷0 错误态、C/CE/±；
+       `--selftest` 8 项断言全过 + headless 渲染 PASS（深色背景 + 数字键）；
+       系统监视器经子代理审查修复 3 个中等问题（MemAvailable 回退条件、
+       CPU 增量无符号下溢守卫、接口/磁盘对象缓存））→ **壁纸幻灯片 ✅**
+       （`[wallpaper] slideshow_dir` + `slideshow_interval` 配置段：desktop 层按
+       文件名排序定时轮换目录内图片；--wallpaper 优先、其次幻灯片、再单张
+       path；headless 三连拍验证红→绿轮换 PASS；已知：LayerShellQt 增量 paint
+       调度失效（update/repaint/requestUpdate 均不触发 surface 提交），轮换用
+       hide/show 强制重绘，真机潜在闪烁已注释；子代理审查 S1 优先级/M2 溢出/
+       L 系全修复）→ **网络/蓝牙集成 ✅**（设置中心"网络"模块：NetworkManager
+       D-Bus 状态（连接状态/活动连接 Id/Type/IPv4）；"蓝牙"模块：Bluez 适配器
+       电源开关 + 设备列表（Name/地址/连接状态）；服务缺失降级"服务不可用"
+       （与音频模块同款）；**子代理审查 S1/S2 严重问题全修复**（GetManagedObjects
+       a{oa{sa{sv}}} 类型化注册解组、AddressData aa{sv} 双形态解组、连接路径
+       精确匹配、失败提示时序）+ **D-Bus mock 端到端验证 PASS**（Qt 注册假
+       Bluez/NetworkManager 到 system bus：NET 连接+IP 192.168.1.100、
+       BT 适配器+设备解析全过）；headless 渲染 PASS；真机需 NetworkManager/
+       Bluez 验证真实连接）——**第三批 5 项全部完成**
 - [x] 编译与冒烟验证（headless 运行 + 截图 + 像素校验，2026-08 Arch/WSL2 通过）
 - [x] 完整渲染验证（compositor + w10shell 同跑：桌面壁纸渐变 + 任务栏渲染成功，2026-08）
 - [ ] 真机/嵌套环境验证（DRM、XWayland 运行时、鼠标键盘实际交互）

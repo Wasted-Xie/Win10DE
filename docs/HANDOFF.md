@@ -37,6 +37,7 @@
 | M8 | 视觉打磨：窗口阴影（自绘 ARGB 渐变 buffer）、Aero Snap（Win+←/→ 半屏 / ↑ 最大化 / ↓ 还原 + 平滑动画）、窗口移动动画；圆角遵循 Win10 直角设计（UI 元素 Qt 侧 2px 圆角） | ✅ 完成（阴影/Snap headless 验证通过） |
 | 主题 | **主题功能 + 浅色模式 + 自定义通道**：`src/ipc/theme.{h,cpp}`（共享主题定义）—`[theme]` 段 `mode=dark/light` 预设 + 14 颜色键覆盖；compositor（标题栏/按钮/文字/背景）与 w10shell（任务栏/开始菜单/时钟）读同一配置 | ✅ 完成（深色回归/浅色/自定义三态验证通过） |
 | 系统应用 | **通用接口框架**（`docs/SYSTEMAPPS.md`：独立二进制 + D-Bus 单实例激活 `org.w10de.Apps.<Name>`/Activate(s path)，`src/systemapps/appipc.{h,cpp}` 供后续应用复用）+ **w10explorer 文件资源管理器**（文件操作对标 Windows）+ **w10settings 设置中心**（KDE 风格，主题/壁纸/关于/开机自启） | ✅ 完成（explorer selftest 8 项 + settings 配置读写 selftest + 双应用 headless 渲染 + 单实例 D-Bus 激活验证通过） |
+| 功能补全（goal cd47bf3e） | **第一批：Alt+Tab 切换器** ✅（`src/compositor/alttab.{h,cpp}`：scene 层 UI、候选=当前工作区可见窗口（xdg+XView）、强调色高亮、Seat 集成 Alt+Tab/Shift+Tab/Alt 释放、`--alttab-test` 帧钩子 headless 验证 PASS）；**全局搜索** ✅（开始菜单顶部搜索框：应用过滤 + 主目录文件搜索（QDirIterator 数量上限）、混合结果、文件 systemd 默认打开、磁贴区隐藏、聚焦即输入；渲染验证 PASS）；**通知中心** ✅（`org.freedesktop.Notifications` 标准 D-Bus 服务 + 右下角弹窗 360×100（5 秒自动隐藏、点击打开历史）+ 通知历史中心 380×480（Esc 关闭）；gdbus 触发 + headless 渲染验证 PASS：card 6314/文字 1214 像素）；**剪贴板历史** ✅（Win+V 语义：`ClipboardHistory` 监听系统剪贴板（文本/图片、连续去重、上限 20）+ overlay 历史面板 360px（点击写回剪贴板、Esc 关闭、空态占位）+ Win+V 快捷键（compositor fork dbus-send → `org.w10de.Clipboard.ToggleClipboardHistory`）；`--clipboard-selftest` 逻辑自测 + 面板渲染验证 PASS：card 33831/文字 73）；**终端 w10term** ✅（`src/systemapps/term/`：forkpty + **非阻塞 master fd**（阻塞 fd 会卡死 Qt 事件循环——gdb attach 实测）+ QSocketNotifier 读 + ANSI 子集解析（SGR 16 色/清屏/退格；光标移动忽略）+ 按键转发 + Ctrl+Shift+C/V 本地复制粘贴 + appipc 单实例；`--selftest`（pty 回读 + ANSI 提取单测）+ 渲染 PASS：文字 1282/背景 34354 像素 + 单实例 D-Bus 激活 PASS）——**第一批 5 项全部完成**；**第二批：显示设置** ✅（`src/compositor/dbus_service.{h,cpp}`：org.w10de.Compositor/Outputs——GetOutputs/GetModes/SetMode/SetScale/SetPosition，libdbus 共享连接（只 unref 不 close）+ dbus fd 挂 wl_event_loop + wlroots 0.19 state API 热应用；w10settings"显示"模块：输出/分辨率/缩放下拉 + 应用/刷新 + `--page display`；IPC 热应用验证 PASS：SetScale 200→GetOutputs 960x540、SetMode 1280x720→640x360；显示页渲染 PASS）→ **快捷键配置化** ✅（`src/ipc/shortcuts.{h,cpp}`：[shortcuts] 配置段解析 "win+q"/"ctrl+alt+l"（修饰键 win/ctrl/shift/alt + 键名 a-z/0-9/方向/F 键等）+ 14 动作绑定（close/maximize/minimize/snap×4/lock/quit/clipboard/workspace_1-4；Alt+Tab 语义特殊保持固定）；processKey 查表分发——`(mods & 0x4F) == b.mods` 修饰组合精确匹配（支持 ctrl/alt/shift，原 pureLogo 特化为通用）；dispatchShortcut 动作实现与原硬编码一致；`--shortcuts-dump` 打印生效绑定）→ 电源/音频/默认应用；第三批生态 | 按 KDE 差距分析优先级推进 |
 
 **验证状态**：多轮子代理静态审查全部完成（前 3 轮共 92 问题全部修复或标注；M2b/M7续/M8 又 3 轮审查并修复，见 README「M2b / M7 续 / M8 开发与验证」节）。**2026-08 完成真实编译 + headless 冒烟 + 完整渲染验证**（WSL2 Arch：vendored wlroots 0.19 源码编译 + 各二进制构建成功；`--frames 5` 截图像素校验通过；compositor+w10shell 同跑验证桌面壁纸渐变 + 任务栏渲染成功）。**M2b/M7续/M8 专项验证**（2026-08）：标题栏白字/关闭钮像素、多工作区 4 场景、窄窗口文字清空、窗口阴影、Aero Snap 贴边全部 headless 截图/像素验证通过。XWayland 运行时验证待真机（WSL 无 X11）。
 
@@ -83,8 +84,14 @@ w10shell（Qt 6 Widgets，layer-shell 客户端）
 | `Clock` | 时钟（HH:mm + 日期，QTimer 1s 刷新） |
 | `TaskbarButton` | 窗口项按钮：标题显示、激活高亮（强调蓝）、点击 `activate()` |
 | `ForeignToplevelManager/Handle` | foreign-toplevel **客户端自写绑定**（wayland-scanner 生成协议代码 + Qt 封装）：窗口列表模型/操作 |
-| `StartMenu` | 开始菜单：磁贴网格（QListWidget IconMode）、单击启动（QProcess 分离式）、Esc 隐藏 |
+| `StartMenu` | 开始菜单：三列布局（侧栏/应用列表/磁贴）+ **顶部搜索框（应用过滤 + 主目录文件搜索）**、单击启动（QProcess 分离式）、Esc 隐藏 |
 | `appmodel.{h,cpp}` | .desktop 扫描解析（/usr/share/applications 等 3 目录、Name/Icon/Exec、NoDisplay 过滤） |
+| `ipc/notificationservice.{h,cpp}` | **通知 D-Bus 服务**（org.freedesktop.Notifications：Notify/CloseNotification/GetCapabilities/GetServerInformation，历史 ≤50 条，notificationReceived 信号） |
+| `ipc/clipboardservice.{h,cpp}` | **剪贴板面板 D-Bus 服务**（org.w10de.Clipboard.ToggleClipboardHistory → toggleRequested 信号，随 /Shell 同服务注册 /Clipboard 对象） |
+| `notification/notificationpopup.{h,cpp}` | **通知弹窗**（overlay 右下角固定 360×100：app/摘要/正文三行，paintEvent 自绘背景，点击发 clicked，showNotification 更新内容） |
+| `notification/notificationcenter.{h,cpp}` | **通知历史中心**（overlay 380×480：历史倒序列表，refresh(history) 刷新，Esc 关闭） |
+| `clipboard/clipboardhistory.{h,cpp}` | **剪贴板历史模型**（监听 QClipboard::dataChanged，文本/图片、与最近一条去重、上限 20，addText/addImage 供测试种子与写回路径） |
+| `clipboard/clipboardpanel.{h,cpp}` | **剪贴板历史面板**（overlay 右缘 360px：文本单行预览/图片缩略图、点击 entryPicked、Esc 关闭、空态占位、高度随条目数自适应） |
 | `DesktopWindow` | 桌面（background 层）：壁纸（--wallpaper 或内置 Win10 渐变）、桌面图标（QFileSystemModel + 双击打开） |
 | `SniWatcher` | SNI watcher D-Bus 服务（org.kde.StatusNotifierWatcher，纯 Qt，无 KF）；注册项跟踪 + 信号 |
 | `TrayIcon` | 单个托盘图标：IconName/IconPixmap 读取、左键 Activate、右键 ContextMenu、PropertiesChanged 刷新 |
@@ -150,6 +157,14 @@ w10shell（Qt 6 Widgets，layer-shell 客户端）
 | **主题系统**：`src/ipc/theme.{h,cpp}`（纯 C++ 共享定义：Theme 结构 + 深/浅预设 + `loadTheme(Config)` + `parseColor`）；compositor（`theme()` 访问器：标题栏/按钮/hover/标题文字/桌面背景/截图校验期望色）与 w10shell（`theme::loadFromConfig` + `colors.cpp` 全局主题，colors.h 常量改为访问器函数）读同一 `~/.config/w10de/config.ini` 的 `[theme]` 段 | mode=dark（默认，值不变）/light（浅灰任务栏标题栏 + 深字）/自定义键覆盖三态共用一套机制，双进程视觉一致；**自定义通道 = `[theme]` 段任意 `#RRGGBB` 键覆盖预设**（15 键含 menu_sidebar/accent_text，见 `w10de.conf.example`） |
 | **主题审查修复**（AgentTeams t1-t3：compositor 核心/shell 接入/交叉一致性）：空配置回退深色预设；shell 加 `--config` 对齐 compositor（主题/壁纸路径不分叉）；新增 `accent_text` 键（激活高亮固定白字）；桌面图标区主题化；浅色菜单 #F0F0F0 与磁贴可辨 | 5 中等 + 若干轻微修复后四组验证（深色/浅色/自定义/完整渲染）全部 PASS |
 | **依赖从源码编译（兼容性）**：`cmake/DepSource.cmake` 通用机制（系统 pkg-config 优先 → 缺失/版本不符时固定 URL 下载 + meson 编译到 `build/_deps/prefix` + PKG_CONFIG_PATH 注入 + stamp 增量 + 下载缓存）+ `cmake/DepsCompat.cmake` 依赖编排（wlroots 生态 15 项：wayland(-protocols)/libdrm/pixman/libxkbcommon/libdisplay-info/libliftoff/libseat/libevdev/libinput/hwdata/mesa/cairo/pango） | `W10DE_DEP_SOURCE=auto/always/never` + `W10DE_FORCE_SOURCE_DEPS` 验证（5 依赖 wayland-protocols/wayland/libdrm/pixman/libxkbcommon 全部源码构建成功并链接回归通过）；版本比较为 ≥（点分段数值）；下载优先系统 curl（CMake 内置 TLS 在 WSL 报 SSL connect error 实测）；**多源 + 延迟筛选 + 魔数校验**（URL 分号列表逐源测延迟 `--range 0-0` 选优；gitlab 对不存在 ref 返回 200+HTML，下载后校验 gzip/xz/bz2/tar/zip 魔数拒绝错误页）；原独立 release 域名（dri/cairographics/xkbcommon/mesa/gnome）在部分网络不可达，已统一改 gitlab archive（tag 带项目前缀）；GitHub 官方 mirror + gh-proxy 为 wayland/wayland-protocols/mesa/pango/hwdata 加镜像；**fdo 无国内镜像站**（TUNA/USTC/阿里实测）；libudev 假定系统；Qt6 源码编译留接口 |
+| **通知系统**：`NotificationService`（`org.freedesktop.Notifications` 标准服务，Qt 槽=方法名：Notify/CloseNotification/GetCapabilities/GetServerInformation）+ `NotificationPopup`（overlay 右下角，**固定尺寸 360×100**，paintEvent 直接 fillRect 背景——layer-shell 窗口无系统背景，QSS 背景需 WA_StyledBackground 或自绘）+ `NotificationCenter`（历史 380×480，Esc 关闭）；弹窗 5 秒 QTimer 自动隐藏、点击打开中心 | 标准 D-Bus 通知协议（gdbus 可触发，busctl 对 `as`/`a{sv}` 空容器语法报 "Too many parameters"，用 gdbus `'[]' '{}'`）；**验证脚本教训：kill shell 必须在 wait compositor 之后**——截图前杀 shell 会销毁全部层表面（layerSurfaces_ 清空），渲染输出纯壁纸，曾误判为弹窗渲染失败 |
+| **剪贴板历史（Win+V）**：`ClipboardHistory`（监听 QClipboard::dataChanged，文本/图片条目、**全表去重并移到顶部**、上限 20）+ `ClipboardPanel`（overlay 右缘 360px：文本预览/图片缩略图、点击写回剪贴板、Esc 关闭、空态占位、高度随条目数自适应）+ `ClipboardService`（`org.w10de.Clipboard.ToggleClipboardHistory`，随 /Shell 同服务注册 /Clipboard 对象）+ compositor Win+V 快捷键（fork **double-fork** 异步触发，防僵尸）+ **`wlr_data_device_manager_create`（M1 缺口补上：此前无管理器，客户端间剪贴板/拖放实际不通，剪贴板历史无从谈起）** + **面板 map 即获键盘焦点、unmap 补偿回顶层窗口**（layer-shell on_demand 需 compositor 显式 notify_enter；M2） | Qt D-Bus 槽名即方法名（首字母大写，busctl 大小写敏感）；`--clipboard-selftest`（headless 逻辑自测：去重/移顶/上限/图片/**QVariant 往返**）+ `--clipboard-seed`（渲染验证种子）+ `--clipboard-test <f>`（帧钩子触发面板，进程级单次）；**验证脚本教训：headless 下需显式启动 dbus-daemon（残留 socket 无 daemon 时 Qt 自 spawn 到随机地址，compositor fork 的 dbus-send 连不上）；触发前轮询 bus 确认 org.w10de.Shell 已注册**（shell 启动注册存在时序窗口）。子代理审查 S1（QVariant metatype）+ M1-3 + L4-L8 全部修复，L1（图片逐像素去重）/L2（dataChanged 同步拉取）/L3（面板与通知弹窗同右下角重叠）/L9（request_set_selection 无 serial 校验，既有）登记为已知简化 |
+| **终端 w10term**：`TerminalPty`（forkpty + 子进程 exec shell -i + **master fd 设 O_NONBLOCK**——阻塞 fd 使 onReadable 循环 read 卡死 Qt 事件循环（QTimer/repaint 全停，gdb attach 主线程栈实测 read 阻塞于 pty master）→ QSocketNotifier 读 → outputReady）+ `TerminalEdit`（QPlainTextEdit 只读显示，ANSI 子集解析：OSC 标题吞到 BEL/SGR 16 色含亮色与 39/49/ESC[2J 清屏/退格/\r 忽略/光标移动忽略；keyPressEvent 拦截按键转发：Ctrl+字母→控制码、方向键/功能键→ESC 序列、Shift+符号用 e->text()、Alt 组合→ESC+字符、Ctrl+Shift+C/V 本地复制粘贴；**IME 提交转发**（inputMethodEvent））+ `TerminalPty::stop` 用 deleteLater 关 notifier（**Qt 禁止在 activated 槽栈内 setEnabled——gdb 实测崩溃**）| `--selftest`（offscreen：bash -c echo 经 pty 回读断言 + TerminalEdit ANSI 文本提取单测）+ 渲染验证（bash -i 提示符文字 628/背景 34426 像素）+ 单实例 D-Bus（org.w10de.Apps.Terminal）；**调试教训：stderr 重定向到文件时全缓冲，kill 丢日志导致误判"事件循环卡死"，main 开头 setvbuf(_IONBF) 无缓冲**。子代理审查 S1（write 部分写/EAGAIN 丢数据→pendingOut_+Write notifier）、S2（UTF-8 跨 chunk 截断乱码→增量解码）、S3（关窗留僵尸→SIGHUP+超时 waitpid+SIGKILL）、S4（EOF 后 notifier 忙循环 CPU100%→deleteLater+close）+ M1-M7（fcntl 错误处理/TERM 环境/亮色映射/Shift 符号与 Alt 组合/IME/退格缓冲交互/滚动条件）全部修复 |
+| **显示设置（第二批）**：`CompositorDbus`（compositor 侧 D-Bus 服务 `org.w10de.Compositor`/Outputs——GetOutputs `a(siiiii)`/GetModes/SetMode/SetScale/SetPosition）+ w10settings"显示"模块（输出/分辨率/缩放下拉 + 应用/刷新，`--page display` 测试辅助，多输出按 currentIndex 操作 + 切换刷新）+ `Compositor::findOutputByName/outputs()` + 0.19 state API 热应用（wlr_output_state_set_custom_mode/set_scale + commit_state）+ **背景矩形随输出 commit 同步**（M1：SetMode 放大/SetPosition 移动后背景不露底） | **libdbus 集成要点**：`dbus_bus_get` 返回**共享连接**——**只 unref 不 close**（close 断言 abort，实测）+ 析构/失败路径 **unregister_object_path**（M4：vtable 悬垂）；dbus fd 挂 `wl_event_loop_add_fd`（单线程共存，read_write(0)+dispatch 循环）。**Qt D-Bus 教训**：`QDBusReply<QDBusArgument>` 与 `value<QDBusArgument>()` 直接迭代在 Qt6 **只读断言崩溃**（gdb 定位）——必须用自定义结构 + 流运算符 + `qdbus_cast`（OutputInfo/ModeInfo，Q_DECLARE_METATYPE 在全局）。**验证**：SetScale 200→960x540、SetMode 1280x720→640x360 热应用；显示页加载日志 `display page loaded 1 output(s) first=HEADLESS-1`；渲染 PASS。headless 无 modes → 常用分辨率回退 + "当前模式"项（L5）。审查 M1-M4 全部修复，L1-L6/L8 修复或登记，L9（outputs_ 无 destroy 监听，DRM 热拔插隐患）登记 |
+| **快捷键配置化（第二批）**：`src/ipc/shortcuts.{h,cpp}`（ShortcutAction 14 动作 + parseShortcut("win+q"/"ctrl+alt+l") + loadShortcuts([shortcuts] 段，非法回退默认）+ seat.cpp processKey 查表分发（`(mods & 0xFD) == b.mods` 精确匹配修饰组合 + xkb_keysym_to_lower 支持 shift 组合，dispatchShortcut 动作实现与原硬编码一致）+ `--shortcuts-dump` 验证参数 | 修饰位用魔法数 0x40/0x04/0x01/0x08（wlr_keyboard_modifier LOGO/CTRL/SHIFT/ALT，ipc 层避免 wlroots 头依赖）；**0xFD = LOGO|CTRL|ALT|SHIFT|MOD2|MOD3|MOD5**（M1：原 0x4F 含 CAPS 且注释错误——0.19 get_modifiers 不含 locked 位所以 CAPS 无实际影响，显式修正防升级隐患）；**绑定冲突检测**（M2：同 (mods,sym) 告警 first-wins）；Alt+Tab 语义特殊（Alt 释放时序）保持固定不配置化；**验证**：默认 dump 与原硬编码逐项一致（13/14，Clipboard=win+v 为新增拦截——原转发客户端）、自定义（win+x/ctrl+alt+l/ctrl+f1）生效、非法（缺+、缺修饰键、未知键名、重复修饰键）回退默认、冲突告警、shift 组合解析；回归全 PASS。审查 M1/M2 + L1（shift 键符）/L4/L5/L6 修复，L2（alt+tab 配置被吞）/L8（锁定时快捷键生效，继承原版）文档登记 |
+| **电源管理（第二批）**：`src/systemapps/settings/powerinfo.{h,cpp}`（sysfs 直读：`/sys/class/power_supply/BAT*`（type=Battery 过滤 + BAT 前缀，避免外设电池——M5）capacity/status/energy_now（charge_now 回退，**按来源标注 mWh/mAh 不强行换算**——M1）/`/sys/class/backlight/*`（max/brightness 读写 + **W_OK 可写探测**——M4））+ w10settings"电源"模块（电池状态：设备/电量%/充电状态/剩余能量 + 亮度滑块：**valueChanged+!isSliderDown 键盘可调**（M2）+ **缓存 maxBrightness**（M3）+ 无权限禁用滑块 + QSignalBlocker 防刷新写回） | **选型**：KDE 用 UPower D-Bus，sysfs 是内核直出接口（所有 Linux 都有，UPower 同源数据），无 D-Bus 依赖且 WSL 有虚拟 BAT1 可 headless 验证；**验证**：`--selftest`（BAT1 100% Full + backlight none）PASS、`--page power` 渲染 PASS（106072 像素，与外观/显示页像素数不同确认真实切换）。审查 M1-M5 全部修复，L1（percent -1 显示 --）/L9（selftest 放宽）修复，L2-L8/L10（status 映射不全/写后不回读/多背光选择）登记 |
+| **音频控制（第二批）**：`src/systemapps/settings/audioinfo.{h,cpp}`（libpulse 客户端 pa_context API：连接（connect <0 立即失败 + 状态回调 FAILED/TERMINATED 双通道上报）+ get_sink_info_list（eol 判完成 + **查询序列号**——M4 快速刷新不混数据）+ set_sink_volume/mute（**pa_operation_unref 全收口**——S3 泄漏修复；未就绪挂起 pending）；pa_mainloop 由 QTimer 20ms 非阻塞迭代驱动（上限 8 次防呆）+ **内部连接超时 2.5s**（M1：挂起时断开允许重建）+ w10settings"音频"模块（sink 下拉 + 音量滑块 + 静音 + 刷新 + **可取消的 3 秒超时兜底**（L1）+ **切换 sink 更新显示**（L7）+ QSignalBlocker）+ paVolumeToPercent 静态（selftest） | **libpulse 关键语义**：READY 状态不得重复 connect（S1：BADSTATE 断言——修复后刷新/重进页面不再误报）；READY 时 refreshSinks 直接重发查询（S2：否则刷新是 no-op）；TERMINATED 与 FAILED 分开（M2：重建/断开不闪"不可用"）；音量 0% → PA_VOLUME_MUTED（M3：-20dB 近似仍有 10% 响度）+ 钳制 0-100（L8）。**验证**：`--selftest` 音量换算断言 PASS、`--page audio` 渲染 PASS（106070 像素）、无服务超时兜底显示不可用。审查 S1-S3 + M1-M4 + L1/L2/L3/L5/L6/L7/L8 全部修复，L4（pending 无上限）登记 |
+| **默认应用设置（第二批收官）**：`src/systemapps/settings/defaultapps.{h,cpp}`（xdg 标准 mimeapps.list：loadMimeDefaults 读 [Default Applications] 段（**分号列表取首个**——L1）+ saveMimeDefaults 写（**QSaveFile 原子写**——M1、保留注释/其他段、**空 map 不写空段**——L3）+ listApplications（.desktop 扫描：**只解析 [Desktop Entry] 主段 + Name[lang] locale 匹配**——M6、**用户目录优先去重**——M7、XDG_DATA_HOME——M4）+ currentDefault/setDefault（**浏览器只设 http/https 不覆盖 text/html**——M5））+ w10settings"默认应用"模块（3 类别下拉 + 应用（**失败中断**——L7）+ 状态） | **xdg 语义**：写入位置 $XDG_CONFIG_HOME/mimeapps.list（spec 推荐 GUI 位置，QStandardPaths 尊重 XDG 变量——M4）；浏览器/邮件/文件管理器类别 mime 映射。**验证**：`--selftest` mimeapps 读写断言（保留注释/其他段/保序）PASS、`--page defaults` 渲染 PASS（106115 像素）。审查 M1/M4/M5/M6/M7 + L1/L3/L7 修复，M2（[Added Associations] 同步——严格 xdg 关联）、M3（多级 mimeapps 合并）、M8（[Removed Associations] 清空）、L2/L4/L5/L9/L10（段内注释保留/刷新/懒加载/NoDisplay 过滤/子目录）登记 |
 
 ---
 
@@ -192,6 +207,8 @@ src/compositor/
   xview.{h,cpp}                     # XView：XWayland 窗口 + 同款装饰/任务栏/阴影/动画（M7 续）
   seat.{h,cpp}                      # Seat：输入/焦点/拖动/装饰交互/层表面命中/hover
   layer_shell.{h,cpp}               # LayerSurface：层表面管理/命中
+  alttab.{h,cpp}                    # Alt+Tab 切换器（scene 层 UI + Seat 集成，第一批）
+  dbus_service.{h,cpp}              # D-Bus 服务 org.w10de.Compositor（显示设置 IPC，第二批）
   titletext.{h,cpp}                 # M2b：cairo/pango 标题文字 → 自实现 wlr_buffer
   shadow.{h,cpp}                    # M8：窗口阴影渐变 buffer（自绘）
   util.h                            # W10DE_CONTAINER_OF 宏 + themeColorToFloat
@@ -201,6 +218,7 @@ src/compositor/
 src/ipc/
   config.{h,cpp}                    # 无依赖 INI 解析器（compositor/shell 共用）
   theme.{h,cpp}                     # 主题定义（Theme 结构/深浅预设/loadTheme/parseColor，纯 C++）
+  shortcuts.{h,cpp}                 # 快捷键配置（[shortcuts] 段解析/默认绑定，第二批）
 
 src/shell/
   main.cpp                          # 入口：layer-shell 配置（桌面/任务栏/开始菜单）+ --wallpaper + 主题加载
@@ -211,8 +229,14 @@ src/shell/
   taskbar/clock.{h,cpp}             # 时钟
   taskbar/taskbarbutton.{h,cpp}     # 窗口项按钮
   ipc/foreigntoplevel.{h,cpp}       # foreign-toplevel 客户端绑定（Qt 封装）
+  ipc/notificationservice.{h,cpp}   # 通知 D-Bus 服务（org.freedesktop.Notifications，第一批）
+  ipc/clipboardservice.{h,cpp}      # 剪贴板面板 D-Bus 服务（org.w10de.Clipboard，第一批）
+  notification/notificationpopup.{h,cpp}   # 通知弹窗（overlay 右下角，固定 360×100）
+  notification/notificationcenter.{h,cpp}  # 通知历史中心（overlay 380×480）
+  clipboard/clipboardhistory.{h,cpp}       # 剪贴板历史模型（QClipboard 监听，第一批）
+  clipboard/clipboardpanel.{h,cpp}         # 剪贴板历史面板（overlay 右缘 360px，第一批）
   startmenu/appmodel.{h,cpp}        # .desktop 扫描
-  startmenu/startmenu.{h,cpp}       # 开始菜单
+  startmenu/startmenu.{h,cpp}       # 开始菜单（含搜索框）
   tray/sniwatcher.{h,cpp}           # SNI watcher 宿主（D-Bus 服务，M5）
   tray/trayicon.{h,cpp}             # 单个托盘图标（属性读取/Activate/ContextMenu）
   tray/trayarea.{h,cpp}             # 任务栏托盘区（图标集合管理）
@@ -241,8 +265,15 @@ src/systemapps/
     explorerwindow.{h,cpp}          # 主窗口（导航/地址栏/文件区/右键菜单/快捷键/状态栏）
     fileops.{h,cpp}                 # 文件操作（复制/剪切/粘贴/回收站/重命名/新建/大小）
   settings/                         # w10settings 设置中心（KDE System Settings 风格）
-    main.cpp                        # 入口：单实例 + --selftest（配置读写 headless 自测）
-    settingswindow.{h,cpp}          # 主窗口（搜索/左侧分类/右侧模块：主题/壁纸/关于/开机自启）
+    main.cpp                        # 入口：单实例 + --selftest（配置/电源/音量/mimeapps headless 自测）+ --page
+    settingswindow.{h,cpp}          # 主窗口（搜索/左侧分类/右侧模块：外观/系统/**显示**/**电源**/**音频**/**默认应用**）
+    powerinfo.{h,cpp}               # 电源信息（sysfs 电池/背光，第二批）
+    audioinfo.{h,cpp}               # 音频控制（libpulse 客户端，第二批）
+    defaultapps.{h,cpp}             # 默认应用（xdg mimeapps.list，第二批收官）
+  term/                             # w10term 终端（第一批，2026-08）
+    main.cpp                        # 入口：单实例 + --selftest（pty 回读 + ANSI 提取单测）
+    terminalpty.{h,cpp}             # PTY 封装（forkpty + 非阻塞 master + QSocketNotifier）
+    termwindow.{h,cpp}              # 主窗口（TerminalEdit：ANSI 解析 + 按键转发）
   CMakeLists.txt                    # systemapps_appipc 静态库 + 各应用 + .desktop 生成
 
 third_party/
@@ -270,6 +301,34 @@ third_party/
   （任务栏/标题栏 #F3F3F3 + 深色文字 202 像素 + 无纯白残留）、自定义键覆盖
   （taskbar_bg=#123456、titlebar_bg=#654321 双进程生效）。锁屏 w10lock 未主题化
   （保持深色时钟，MVP 合理）。
+- ✅ 第一批功能补全（2026-08）：Alt+Tab（--alttab-test 300 帧钩子：强调色高亮 8583/
+  常态 5990 像素）、全局搜索（开始菜单搜索框渲染）、通知中心（gdbus 触发 + 弹窗
+  card 6314/文字 1214 像素）、剪贴板历史（--clipboard-selftest PASS + 面板渲染
+  card 33831/文字 73 像素）、**w10term**（--selftest：pty 回读 160B + ANSI 提取
+  单测 PASS；渲染：bash -i 提示符文字 628/背景 34426 像素；单实例 D-Bus 激活
+  PASS）。**第一批 5 项全部完成。**
+- ✅ 第二批显示设置（2026-08）：compositor D-Bus 服务（org.w10de.Compositor/Outputs）
+  GetOutputs/GetModes/SetMode/SetScale/SetPosition 全部工作（SetScale 200 →
+  GetOutputs 960x540；SetMode 1280x720 → 640x360，热应用生效）；w10settings"显示"
+  模块渲染 PASS（--page display，102158 像素）。
+- ✅ 第二批快捷键配置化（2026-08）：--shortcuts-dump 验证——默认绑定与原硬编码
+  一致（close=win+q 等 14 动作）；自定义 config（close=win+x/lock=ctrl+alt+l/
+  move_left=win+a/workspace_1=ctrl+f1）解析生效；非法配置回退默认。
+- ✅ 第二批电源管理（2026-08）：--selftest（WSL 虚拟 BAT1：`OK battery: BAT1 100%
+  Full`、`OK backlight: none`）PASS；--page power 渲染 PASS（106072 像素）。
+- ✅ 第二批音频控制（2026-08）：--selftest 音量换算断言（0→0/0x8000→50/0x10000→100）
+  PASS；--page audio 渲染 PASS（106070 像素）；WSL 无 Pulse 服务 → 2.5s AudioInfo
+  内部超时 + 3s UI 兜底显示不可用。审查 S1-S3（READY 重复 connect/刷新 no-op/
+  operation 泄漏）+ M1-M4（连接超时/重建闪烁/0% 静音/查询序列号）+ L1-L8 修复。
+- ✅ 第二批默认应用（2026-08）：--selftest mimeapps 读写断言（保留注释/其他段/保序）
+  PASS；--page defaults 渲染 PASS（106115 像素）。审查 M1（QSaveFile 原子写）/M4（XDG
+  变量）/M5（不覆盖 text/html）/M6（locale 名）/M7（去重）+ L1/L3/L7 修复。
+- ✅ **第二批 5 项全部完成（2026-08）**：显示设置、快捷键配置化、电源管理、音频控制、
+  默认应用设置——每项均编译 + headless 验证 + 子代理审查 + 文档同步。
+- 🔶 剪贴板历史：**真实跨应用复制粘贴**依赖 compositor 的 wlr_data_device_manager
+  （已补，M1 缺口）；WSL headless 下无真实复制来源，面板内容用 --clipboard-seed
+  种子验证；**验证脚本须显式启动 dbus-daemon 并轮询 org.w10de.Shell 注册**（Qt
+  自 spawn daemon 到随机地址会导致 compositor fork 的 dbus-send 连不上——实测竞态）。
 - 🔶 **依赖 from-source 机制**（2026-08）：auto 模式全系统走通（15 依赖零下载零
   回归）；**强制源码验证完成**——wayland-protocols / wayland / libdrm / pixman /
   libxkbcommon 五依赖从源码完整构建（下载→解包→meson→install→PKG_CONFIG_PATH
@@ -282,7 +341,15 @@ third_party/
 - ⬜ DRM 真机：headless 之外的后端需真机/KVM。
 
 ### 7.3 已知简化（M3 阶段刻意为之）
-- 开始菜单无搜索框、无固定磁贴（仅 .desktop 列表网格）。
+- 开始菜单无固定磁贴（仅 .desktop 列表网格；搜索框已实现，见第一批全局搜索）。
+- 通知弹窗固定尺寸 360×100（内容超长截断，非动态高度）；通知中心仅会话内历史（不持久化）；无通知分组/勿扰模式。
+- 剪贴板历史：无固定条目/清除全部（KDE Klipper 有）；图片条目无大小上限（大图占内存）；选择条目后写回剪贴板由用户按 Ctrl+V 粘贴（Win10 自动粘贴需 compositor 注入按键，未做）；面板宽度固定 360。
+- **终端 w10term**：ANSI 光标移动/256 色/行内覆盖未实现（追加模式，全屏程序如 vim/top 显示异常）；无终端尺寸随窗口变化（winsize 固定 120×32）；IME 无候选框显示（提交转发可用）；shell 退出后窗口保留（不自动关闭）；粘贴多行不做换行转换；滚动条接近底部才自动跟随（上翻可回看历史）。
+- **显示设置**：单输出为主（多输出下拉仅第一项可操作——SetMode/SetScale 用 outputNames_.first()）；无刷新率/旋转设置；headless 无 modes 列表回退常用分辨率（真机 DRM 用 GetModes）；无"应用后确认/回滚"对话框（改错分辨率立即生效）；设置不持久化（重启 compositor 后恢复默认，KDE 会写配置）。
+- **快捷键配置化**：无设置 UI（编辑 config.ini 生效，KDE 有 System Settings UI）；Alt+Tab 固定不可配；绑定冲突时按动作枚举顺序优先（先定义者生效）；无重复绑定检测；caps lock 开启时修饰位含 MOD2（0x4F 不含 CAPS 位——CAPS 不影响匹配，但 capslock 状态变化可能产生未预期组合，真机验证）。
+- **电源管理**：sysfs 直读（无 UPower D-Bus 集成——数据同源但真机 UPower 的百分比/时间计算更精细）；多电池只显示主电池（BAT* 第一个）；无系统托盘电源图标（KDE Plasma 托盘有）；无省电模式/合盖行为设置；背光写需 root/backlight 组权限（无权限时滑块禁用并提示）。
+- **音频控制**：WSL 无服务时显示不可用（真机 pipewire-pulse 提供服务）；音量映射为 dB 近似（0%≈-20dB 非全静音——0% 时建议后续用 mute 语义）；仅控制默认/首个 sink 的音量与静音（无每应用音量、无设备切换后自动跟踪、无输入设备控制）；pa 连接超时兜底 3 秒（真机正常 <1 秒）。
+- **默认应用**：只写 [Default Applications] 段（不维护 [Added Associations] 同步/多级 mimeapps 合并——严格 xdg 关联算法下部分应用可能不被识别为关联，真机验证）；无 NoDisplay 过滤（设置页列出全部 .desktop）；无子目录 .desktop 扫描；无页面刷新按钮（安装新应用后需重启设置）。
 - 单键盘设备（多键盘热插拔被忽略）、无触摸/数位板。
 - foreign-toplevel `activate()` 硬编码 seat 名 "seat0"。
 - fullscreen 按最大化处理；窗口 Snap 无拖拽到屏幕边缘触发（仅快捷键，MVP）；无四分之一 Snap。
@@ -319,7 +386,8 @@ WLR_BACKEND=wayland ./build/src/compositor/w10compositor --frames 0
 2. **系统应用扩展**（可选）：w10explorer 补充（拖放细节/详情视图/回收站 UI/面包屑）；后续系统应用（记事本/设置/终端）按 SYSTEMAPPS.md 复用 appipc。
 3. **交互打磨**（可选）：拖拽到屏幕边缘触发 Snap、XView 拖动 configure 节流、xdg/XView 统一命中 z 序（审查 #3/#9）。
 4. **锁屏密码验证**（PAM）与电源菜单真实动作确认。
-5. **提交/推送**：当前主题/from-source/explorer 改动在本地（提交 `997457d` 之后），需用户授权后 commit + push。
+5. **提交/推送**：当前第一批 5 项（Alt+Tab/全局搜索/通知中心/剪贴板历史/终端 w10term）+ 第二批 5 项（显示设置/快捷键/电源/音频/默认应用）+ 第三批前 2 项（截图工具/系统监视器）+ 主题/from-source/explorer 改动在本地（最近提交 `dafcd55`），需用户授权后 commit + push。
+6. **第二批（设置完备）**：显示设置 ✅、快捷键配置化 ✅、电源管理 ✅、音频控制 ✅、默认应用设置 ✅——**第二批 5 项全部完成**；**第三批（生态）5 项全部完成**：截图工具 ✅（wlr-screencopy v3 客户端；S1/M1/L1-L5 审查修复；纯壁纸+窗口验证）、系统监视器 ✅（/proc 数据源；审查 3 中等修复）、计算器 ✅（审查 M1-M3 修复；selftest 9 项）、壁纸幻灯片 ✅（slideshow_dir/interval；三连拍红→绿；**LayerShellQt paint 失效→hide/show**；审查 S1 优先级/M2/L 系修复）、网络/蓝牙 ✅（settings 网络+蓝牙模块：NetworkManager/Bluez D-Bus；**子代理审查 S1/S2 严重问题修复**：GetManagedObjects a{oa{sa{sv}}} 类型化注册（QMap<QDBusObjectPath,QMap<QString,QVariantMap>> + qDBusRegisterMetaType）、AddressData aa{sv} 双形态解组（QDBusArgument / QVariantList 兼容）、连接路径精确匹配（M1）、toggle 失败提示时序（M2）、errorText 透传（M3）；**D-Bus mock 端到端验证 PASS**：Qt 在 system bus 注册假服务，NET 连接+IP、BT 适配器+设备解析全过——测试工具 /tmp/w10de-dbtest.cpp（WSL 临时，不入库）；服务缺失降级渲染 PASS；setPowered 的 Properties.Set 签名已审查、mock 未覆盖，真机需验证）。
 
 ---
 
@@ -327,7 +395,7 @@ WLR_BACKEND=wayland ./build/src/compositor/w10compositor --frames 0
 
 - **用户偏好**：简体中文交流；AGENTS.md 要求执行命令/文件变更前经用户确认（审查流程豁免过）；回答结构化、准确性优先、不伪造数据。
 - **开发流**：Windows 编辑 → 复制文件到 WSL（`/root/win10de`）→ WSL 编译（`cmake --build build --target w10compositor`）→ headless 脚本验证。**WSL 无 git**，勿在 WSL 侧提交。
-- **验证脚本**（Windows 侧 `%TEMP%`，经 `/mnt/c/Users/Administrator/AppData/Local/Temp/` 在 WSL 执行）：`w10de-title.sh`（标题栏白字/红钮）、`w10de-ws.sh`（多工作区 4 场景）、`w10de-narrow.sh`（窄窗口）、`w10de-shadow.sh`（阴影）、`w10de-snap.sh`（Snap）、`w10de-syncbuild.sh`（同步+编译）。
+- **验证脚本**（Windows 侧 `%TEMP%`，经 `/mnt/c/Users/Administrator/AppData/Local/Temp/` 在 WSL 执行）：`w10de-title.sh`（标题栏白字/红钮）、`w10de-ws.sh`（多工作区 4 场景）、`w10de-narrow.sh`（窄窗口）、`w10de-shadow.sh`（阴影）、`w10de-snap.sh`（Snap）、`w10de-alttab.sh`（Alt+Tab）、`w10de-search-render.sh`（开始菜单搜索框）、`w10de-notify4.sh`（通知弹窗：gdbus 触发 + 像素校验；**注意 kill shell 必须在 wait compositor 之后**，否则截图时层表面已销毁、画面纯壁纸——此前多次误判渲染失败即此因）、`w10de-clipboard.sh`（剪贴板历史：selftest + 面板渲染；**headless 需显式启动 dbus-daemon 且触发前轮询 org.w10de.Shell 注册**）、`w10de-syncbuild.sh`（同步+编译）、`w10de-shot-dbg.sh`（截图工具：纯壁纸全蓝校验；**pkill 禁用 -f 匹配命令行**——会误杀外层 bash，用 pkill -x）、`w10de-shot-window.sh`（截图工具：设置窗口多色）、`w10de-monitor-render.sh`（监视器渲染）、`w10de-calc-render.sh`（计算器渲染）、`w10de-slideshow3.sh`（壁纸幻灯片三连拍红→绿；**interval=8s + hide/show 强制重绘**）、`w10de-netbt-render.sh`（网络/蓝牙页渲染）、`w10de-pngcheck.py`（PNG 采样分析）、`w10de-batch3-regress.sh`（第三批汇总回归）。
 - **wlroots 头文件无 extern "C" 保护**：C++ 引用必须手动包裹；不稳定接口需要 `WLR_USE_UNSTABLE`。
 - **先读**：本文档 → `docs/ARCHITECTURE.md` → `README.md` → 相关源码，再改代码。
 - **不要**重新核对已确认的 API（见第 4 节决策表与源码注释中的"已确认"标注）；新增 wlr_* 调用时对照 `third_party/wlroots/include/`。
