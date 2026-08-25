@@ -10,7 +10,10 @@ extern "C" {
 #include <wlr/types/wlr_data_device.h>
 #include <wlr/types/wlr_primary_selection.h>
 #include <wlr/util/edges.h>
+#include <wlr/backend/libinput.h>  // wlr_libinput_get_device_handle / is_libinput
 }
+
+#include <libinput.h>  // libinput_device_config_*
 
 #include "compositor/server.h"
 #include "compositor/layer_shell.h"
@@ -78,6 +81,12 @@ Seat::Seat(Compositor& compositor) : compositor_(compositor) {
     wl_signal_add(&seat_->events.request_set_selection, &requestSetSelection_);
     requestSetPrimarySelection_.notify = handleRequestSetPrimarySelection;
     wl_signal_add(&seat_->events.request_set_primary_selection, &requestSetPrimarySelection_);
+
+    // KDE-GAP 中优先：加载 [input] 配置（热插拔设备在 handleNewInput 应用；
+    // 已接入设备在此应用）。
+    inputSettings_ = w10de::ipc::InputSettings::load(
+        compositor_.options().configPath);
+    applyInputSettings(inputSettings_);
 }
 
 Seat::~Seat() {
@@ -92,6 +101,13 @@ Seat::~Seat() {
     wl_list_remove(&keyboardKey_.link);
     wl_list_remove(&keyboardModifiers_.link);
     wl_list_remove(&keyboardDestroy_.link);
+    // 审查 S1：摘除仍挂着的指针设备 destroy 监听（设备存活但 seat 先析构
+    // 的场景），否则设备稍后销毁时回调访问已析构的 Seat。
+    for (auto& entry : pointerDevices_) {
+        if (entry->destroyListener.link.next != nullptr) {
+            wl_list_remove(&entry->destroyListener.link);
+        }
+    }
     if (cursor_ != nullptr) {
         wlr_cursor_destroy(cursor_);
     }
@@ -113,6 +129,9 @@ void Seat::handleNewInput(wlr_input_device* device) {
         }
         auto* kb = wlr_keyboard_from_input_device(device);
         configureKeyboard(kb);
+        // KDE-GAP 中优先：应用键盘重复率设置。
+        wlr_keyboard_set_repeat_info(kb, inputSettings_.repeatRate,
+                                     inputSettings_.repeatDelay);
         keyboardKey_.notify = handleKeyboardKey;
         wl_signal_add(&kb->events.key, &keyboardKey_);
         keyboardModifiers_.notify = handleKeyboardModifiers;
@@ -132,6 +151,18 @@ void Seat::handleNewInput(wlr_input_device* device) {
             break;
         }
         wlr_cursor_attach_input_device(cursor_, device);
+        // KDE-GAP 中优先：记录设备并应用指针设置（libinput accel 等）。
+        // 审查 S1：设备销毁时须从 pointerDevices_ 移除（destroy 监听），
+        // 否则热拔插后 D-Bus 热应用遍历悬垂指针。
+        {
+            auto entry = std::make_unique<PointerDevice>();
+            entry->seat = this;
+            entry->device = device;
+            entry->destroyListener.notify = handlePointerDestroy;
+            wl_signal_add(&device->events.destroy, &entry->destroyListener);
+            pointerDevices_.push_back(std::move(entry));
+        }
+        applyPointerSettings(device);
         wlr_log(WLR_INFO, "pointer device added: '%s'",
                 device->name ? device->name : "");
         break;
@@ -139,6 +170,58 @@ void Seat::handleNewInput(wlr_input_device* device) {
         // M1 暂不支持触摸/数位板/开关设备。
         wlr_log(WLR_DEBUG, "ignoring input device type %d", device->type);
         break;
+    }
+}
+
+// ---- 输入设备设置（KDE-GAP 中优先）----
+
+void Seat::applyInputSettings(const w10de::ipc::InputSettings& s) {
+    inputSettings_ = s;
+    // 键盘重复率（已接入的键盘；后续热插拔在 handleNewInput 应用）。
+    if (keyboard_ != nullptr) {
+        wlr_keyboard_set_repeat_info(keyboard_, s.repeatRate, s.repeatDelay);
+    }
+    // 指针设备（libinput 配置；headless 无真实设备时 no-op）。
+    for (const auto& entry : pointerDevices_) {
+        applyPointerSettings(entry->device);
+    }
+    wlr_log(WLR_INFO, "input settings applied: speed=%.2f natural=%d left=%d "
+            "tap=%d repeat=%d/%d",
+            s.pointerSpeed, s.naturalScroll ? 1 : 0, s.leftHanded ? 1 : 0,
+            s.tapToClick ? 1 : 0, s.repeatRate, s.repeatDelay);
+}
+
+void Seat::applyPointerSettings(wlr_input_device* device) {
+    // 仅 libinput 后端设备可配置（headless/wayland 嵌套无 libinput）。
+    if (!wlr_input_device_is_libinput(device)) {
+        wlr_log(WLR_DEBUG, "input settings: device '%s' is not libinput",
+                device->name ? device->name : "");
+        return;
+    }
+    struct libinput_device* libinputDevice =
+        wlr_libinput_get_device_handle(device);
+    if (libinputDevice == nullptr) {
+        wlr_log(WLR_DEBUG, "input settings: device '%s' handle is null",
+                device->name ? device->name : "");
+        return;
+    }
+    if (libinput_device_config_accel_is_available(libinputDevice)) {
+        libinput_device_config_accel_set_speed(
+            libinputDevice, inputSettings_.pointerSpeed);
+    }
+    if (libinput_device_config_scroll_has_natural_scroll(libinputDevice)) {
+        libinput_device_config_scroll_set_natural_scroll_enabled(
+            libinputDevice, inputSettings_.naturalScroll);
+    }
+    if (libinput_device_config_left_handed_is_available(libinputDevice)) {
+        libinput_device_config_left_handed_set(
+            libinputDevice, inputSettings_.leftHanded);
+    }
+    if (libinput_device_config_tap_get_finger_count(libinputDevice) > 0) {
+        libinput_device_config_tap_set_enabled(
+            libinputDevice,
+            inputSettings_.tapToClick ? LIBINPUT_CONFIG_TAP_ENABLED
+                                      : LIBINPUT_CONFIG_TAP_DISABLED);
     }
 }
 
@@ -307,6 +390,10 @@ void Seat::onViewDestroyed(View* view) {
     }
     if (hoverView_ == view) {
         hoverView_ = nullptr;
+    }
+    // 审查 S1：Snap 布局选择器的目标窗口销毁时清理（防 apply 解引用）。
+    if (snaplayout_ != nullptr && snaplayout_->active()) {
+        snaplayout_->onViewDestroyed(view);
     }
     unfocusView(view);
 }
@@ -548,6 +635,17 @@ void Seat::debugShowAltTab() {
         alttab_ = std::make_unique<AltTabSwitcher>(compositor_);
     }
     alttab_->show();
+}
+
+// headless 验证：显示 Snap 布局选择器（--snaplayout-test 帧钩子）。
+void Seat::debugShowSnapLayout() {
+    if (focusedView_ == nullptr) {
+        return;
+    }
+    if (snaplayout_ == nullptr) {
+        snaplayout_ = std::make_unique<SnapLayoutSwitcher>(compositor_);
+    }
+    snaplayout_->show(focusedView_);
 }
 
 void Seat::updateHover() {
@@ -803,6 +901,23 @@ void Seat::handleKeyboardDestroy(wl_listener* listener, void* /*data*/) {
     wlr_log(WLR_INFO, "keyboard device removed");
 }
 
+void Seat::handlePointerDestroy(wl_listener* listener, void* /*data*/) {
+    // 审查 S1：指针设备销毁（热拔插）。回调内先摘除本监听
+    // （wlr_input_device_finish 要求 destroy 监听全部摘除），
+    // 再从 pointerDevices_ 移除条目（释放 entry，device 由 wlroots 释放）。
+    auto* entry = W10DE_CONTAINER_OF(listener, PointerDevice, destroyListener);
+    Seat* self = entry->seat;
+    wl_list_remove(&entry->destroyListener.link);
+    for (auto it = self->pointerDevices_.begin();
+         it != self->pointerDevices_.end(); ++it) {
+        if (it->get() == entry) {
+            self->pointerDevices_.erase(it);
+            break;
+        }
+    }
+    wlr_log(WLR_INFO, "pointer device removed");
+}
+
 void Seat::processKey(uint32_t timeMsec, uint32_t keycode, wl_keyboard_key_state state) {
     if (keyboard_ == nullptr || keyboard_->xkb_state == nullptr) {
         return;
@@ -811,6 +926,39 @@ void Seat::processKey(uint32_t timeMsec, uint32_t keycode, wl_keyboard_key_state
     const xkb_keycode_t xkbKeycode = keycode + 8;
     const xkb_keysym_t sym = xkb_state_key_get_one_sym(keyboard_->xkb_state, xkbKeycode);
     const uint32_t mods = wlr_keyboard_get_modifiers(keyboard_);
+
+    // ---- Snap 布局选择器（KDE-GAP #3）----
+    // 审查 S3：放在 Alt+Tab 之前——激活期间吞掉 Alt 键，避免双 UI 叠加与
+    // Alt 释放被吞导致 alttab 卡死。
+    if (snaplayout_ != nullptr && snaplayout_->active()) {
+        if (state == WL_KEYBOARD_KEY_STATE_PRESSED) {
+            // 审查 S2：激活中再按 Win+Z 取消（显式匹配 SnapLayout 绑定——
+            // 快捷键分发在激活块之后不可达）。
+            const auto& bindings = compositor_.shortcuts();
+            const ShortcutBinding& sl =
+                bindings[static_cast<size_t>(ShortcutAction::SnapLayout)];
+            const uint32_t modMask = 0xFD;
+            if (sl.valid() && (mods & modMask) == sl.mods &&
+                    (sym == sl.sym || xkb_keysym_to_lower(sym) == sl.sym)) {
+                snaplayout_->hide();
+                return;
+            }
+            if (sym == XKB_KEY_Left) {
+                snaplayout_->move(-1, 0);
+            } else if (sym == XKB_KEY_Right) {
+                snaplayout_->move(1, 0);
+            } else if (sym == XKB_KEY_Up) {
+                snaplayout_->move(0, -1);
+            } else if (sym == XKB_KEY_Down) {
+                snaplayout_->move(0, 1);
+            } else if (sym == XKB_KEY_Return || sym == XKB_KEY_KP_Enter) {
+                snaplayout_->apply();
+            } else if (sym == XKB_KEY_Escape) {
+                snaplayout_->hide();
+            }
+        }
+        return;  // 激活期间吞掉所有按键（不转发客户端、不触发快捷键）
+    }
 
     // ---- Alt+Tab 窗口切换（Win10 语义）----
     const bool isAlt = sym == XKB_KEY_Alt_L || sym == XKB_KEY_Alt_R;
@@ -918,6 +1066,20 @@ void Seat::dispatchShortcut(ShortcutAction action) {
                 } else {
                     focusedView_->unsnap();
                 }
+            }
+        }
+        break;
+    case ShortcutAction::SnapLayout:
+        // Snap 布局选择器（Win+Z）：显示 3×3 网格；再按取消。
+        // 审查 S3 反向：Alt+Tab 激活时不叠加。
+        if (focusedView_ != nullptr && (alttab_ == nullptr || !alttab_->active())) {
+            if (snaplayout_ == nullptr) {
+                snaplayout_ = std::make_unique<SnapLayoutSwitcher>(compositor_);
+            }
+            if (snaplayout_->active()) {
+                snaplayout_->hide();
+            } else {
+                snaplayout_->show(focusedView_);
             }
         }
         break;

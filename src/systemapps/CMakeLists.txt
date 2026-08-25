@@ -61,6 +61,7 @@ add_executable(w10settings
     settings/networkinfo.cpp
     settings/bluetoothinfo.cpp
     ${CMAKE_SOURCE_DIR}/src/ipc/config.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/inputsettings.cpp
     ${CMAKE_SOURCE_DIR}/src/ipc/theme.cpp
     ${CMAKE_SOURCE_DIR}/src/shell/theme/colors.cpp
 )
@@ -239,3 +240,115 @@ file(WRITE "${CALC_DESKTOP}"
     "StartupNotify=true\n")
 install(FILES "${CALC_DESKTOP}" DESTINATION share/applications)
 install(TARGETS w10calc RUNTIME DESTINATION bin)
+
+# ---- w10software：软件中心（已安装应用管理，KDE-GAP 高优先 #1）----
+add_executable(w10software
+    software/main.cpp
+    software/storewindow.cpp
+    software/softwarestore.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/config.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/theme.cpp
+    ${CMAKE_SOURCE_DIR}/src/shell/theme/colors.cpp
+)
+target_include_directories(w10software PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/shell   # theme/colors.h
+)
+target_link_libraries(w10software PRIVATE
+    Qt6::Widgets
+    Qt6::DBus
+    systemapps_appipc
+)
+set_target_properties(w10software PROPERTIES AUTOMOC ON)
+
+set(SOFTWARE_DESKTOP "${CMAKE_CURRENT_BINARY_DIR}/w10software.desktop")
+file(WRITE "${SOFTWARE_DESKTOP}"
+    "[Desktop Entry]\n"
+    "Type=Application\n"
+    "Name=软件中心\n"
+    "Name[en]=Software Center\n"
+    "Comment=已安装应用管理（启动/卸载）\n"
+    "Exec=w10software\n"
+    "Icon=system-software-install\n"
+    "Terminal=false\n"
+    "Categories=System;PackageManager;\n"
+    "StartupNotify=true\n")
+install(FILES "${SOFTWARE_DESKTOP}" DESTINATION share/applications)
+install(TARGETS w10software RUNTIME DESTINATION bin)
+
+# ---- w10viewer：文本/PDF/图像查看器（KDE-GAP 中优先 #2）----
+# PDF 渲染：poppler-qt6（Okular 同款后端；Qt6Pdf 无 Arch 官方包）。
+pkg_check_modules(POPPLER_QT6 REQUIRED IMPORTED_TARGET poppler-qt6)
+add_executable(w10viewer
+    viewer/main.cpp
+    viewer/viewerwindow.cpp
+    viewer/filetype.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/config.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/theme.cpp
+    ${CMAKE_SOURCE_DIR}/src/shell/theme/colors.cpp
+)
+target_include_directories(w10viewer PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/shell   # theme/colors.h
+)
+target_link_libraries(w10viewer PRIVATE
+    Qt6::Widgets
+    Qt6::DBus
+    PkgConfig::POPPLER_QT6
+    systemapps_appipc
+)
+set_target_properties(w10viewer PROPERTIES AUTOMOC ON)
+
+set(VIEWER_DESKTOP "${CMAKE_CURRENT_BINARY_DIR}/w10viewer.desktop")
+file(WRITE "${VIEWER_DESKTOP}"
+    "[Desktop Entry]\n"
+    "Type=Application\n"
+    "Name=查看器\n"
+    "Name[en]=Viewer\n"
+    "Comment=文本、PDF 与图像查看器\n"
+    "Exec=w10viewer %f\n"
+    "Icon=document-viewer\n"
+    "Terminal=false\n"
+    "MimeType=text/plain;text/markdown;text/x-log;application/pdf;"
+    "image/png;image/jpeg;image/bmp;image/webp;image/svg+xml;image/gif;\n"
+    "Categories=Graphics;Office;Viewer;\n"
+    "StartupNotify=true\n")
+install(FILES "${VIEWER_DESKTOP}" DESTINATION share/applications)
+install(TARGETS w10viewer RUNTIME DESTINATION bin)
+
+# ---- w10trash：回收站窗口（KDE-GAP 中优先 #3）----
+# freedesktop Trash spec：~/.local/share/Trash/{files,info}（w10explorer
+# 删除进回收站同格式互操作）。
+add_executable(w10trash
+    trash/main.cpp
+    trash/trashwindow.cpp
+    trash/trashstore.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/config.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/theme.cpp
+    ${CMAKE_SOURCE_DIR}/src/shell/theme/colors.cpp
+)
+target_include_directories(w10trash PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/shell   # theme/colors.h
+)
+target_link_libraries(w10trash PRIVATE
+    Qt6::Widgets
+    Qt6::DBus
+    systemapps_appipc
+)
+set_target_properties(w10trash PROPERTIES AUTOMOC ON)
+
+set(TRASH_DESKTOP "${CMAKE_CURRENT_BINARY_DIR}/w10trash.desktop")
+file(WRITE "${TRASH_DESKTOP}"
+    "[Desktop Entry]\n"
+    "Type=Application\n"
+    "Name=回收站\n"
+    "Name[en]=Trash\n"
+    "Comment=查看与恢复已删除文件\n"
+    "Exec=w10trash\n"
+    "Icon=user-trash-full\n"
+    "Terminal=false\n"
+    "Categories=System;Utility;\n"
+    "StartupNotify=true\n")
+install(FILES "${TRASH_DESKTOP}" DESTINATION share/applications)
+install(TARGETS w10trash RUNTIME DESTINATION bin)

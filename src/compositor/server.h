@@ -58,6 +58,8 @@ struct CompositorOptions {
     // 剪贴板历史验证用：渲染到指定帧时触发 Win+V 面板
     // （headless 截图验证面板渲染；经 D-Bus 通知 shell）。
     int clipboardTestFrame = 0;
+    // Snap 布局验证用：渲染到指定帧时显示布局选择器（KDE-GAP #3）。
+    int snaplayoutTestFrame = 0;
     // 快捷键验证用：打印 [shortcuts] 生效绑定后退出（无需启动后端）。
     bool shortcutsDump = false;
 };

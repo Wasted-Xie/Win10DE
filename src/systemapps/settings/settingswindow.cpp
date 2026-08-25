@@ -38,6 +38,7 @@
 #include <QVBoxLayout>
 
 #include "ipc/config.h"
+#include "ipc/inputsettings.h"
 #include "theme/colors.h"
 
 namespace w10de::settings {
@@ -89,6 +90,7 @@ void SettingsWindow::buildUi() {
     buildDefaultsPage();
     buildNetworkPage();
     buildBluetoothPage();
+    buildInputPage();
     splitter->addWidget(categoryList_);
     splitter->addWidget(pages_);
     splitter->setStretchFactor(0, 0);
@@ -1085,6 +1087,7 @@ void SettingsWindow::selectCategory(const QString& name) {
         {QStringLiteral("default"), QStringLiteral("默认应用")},
         {QStringLiteral("network"), QStringLiteral("网络")},
         {QStringLiteral("bluetooth"), QStringLiteral("蓝牙")},
+        {QStringLiteral("input"), QStringLiteral("输入设备")},
     };
     const QString target = kAliases.value(name, name);
     for (int i = 0; i < categoryList_->count(); ++i) {
@@ -1134,6 +1137,182 @@ void SettingsWindow::onCategoryChanged() {
     } else if (name == QStringLiteral("蓝牙")) {
         refreshBluetooth();
     }
+}
+
+// ---- 输入设备页（第三批：鼠标/键盘/触摸板）----
+
+void SettingsWindow::buildInputPage() {
+    auto* page = new QWidget(pages_);
+    auto* lay = new QVBoxLayout(page);
+
+    auto* title = new QLabel(QStringLiteral("输入设备"), page);
+    title->setStyleSheet(QStringLiteral("font-size: 15px; font-weight: bold;"));
+    lay->addWidget(title);
+    auto* hint = new QLabel(QStringLiteral(
+        "鼠标/触摸板/键盘设置。经 org.w10de.Compositor 热应用；"
+        "headless 或非 libinput 设备（嵌套 Wayland）自动降级为仅保存配置。"), page);
+    hint->setStyleSheet(QStringLiteral("color: %1;")
+        .arg(theme::kTextSecondary().name()));
+    hint->setWordWrap(true);
+    lay->addWidget(hint);
+
+    // 初始值：当前 [input] 配置。设计选择：读本地 config 而非
+    // GetInputSettings——避免 w10settings 启动依赖 compositor D-Bus
+    // 存活（headless/独立启动也可用）；两源由"compositor 启动即从
+    // 同一 config 加载"保证一致（审查 L）。
+    const w10de::ipc::InputSettings current =
+        w10de::ipc::InputSettings::load(configPath().toStdString());
+
+    auto* grid = new QGridLayout;
+    grid->setHorizontalSpacing(12);
+    grid->setVerticalSpacing(10);
+
+    auto makeLabel = [page](const QString& text) {
+        auto* l = new QLabel(text, page);
+        l->setStyleSheet(QStringLiteral("color: %1;")
+            .arg(theme::kTextSecondary().name()));
+        return l;
+    };
+
+    // 指针速度：-100..100（百分比）↔ -1.0..1.0
+    grid->addWidget(makeLabel(QStringLiteral("指针速度")), 0, 0);
+    auto* speedRow = new QHBoxLayout;
+    pointerSpeedSlider_ = new QSlider(Qt::Horizontal, page);
+    pointerSpeedSlider_->setRange(-100, 100);
+    pointerSpeedSlider_->setValue(
+        qBound(-100, qRound(current.pointerSpeed * 100.0), 100));
+    speedRow->addWidget(pointerSpeedSlider_, 1);
+    pointerSpeedValue_ = new QLabel(page);
+    speedRow->addWidget(pointerSpeedValue_);
+    grid->addLayout(speedRow, 0, 1);
+
+    naturalScrollCheck_ = new QCheckBox(
+        QStringLiteral("自然滚动（触摸板/滚轮反向）"), page);
+    naturalScrollCheck_->setChecked(current.naturalScroll);
+    grid->addWidget(naturalScrollCheck_, 1, 1);
+    grid->addWidget(makeLabel(QStringLiteral("滚动")), 1, 0);
+
+    leftHandedCheck_ = new QCheckBox(QStringLiteral("左手模式（交换主键）"), page);
+    leftHandedCheck_->setChecked(current.leftHanded);
+    grid->addWidget(leftHandedCheck_, 2, 1);
+    grid->addWidget(makeLabel(QStringLiteral("按键")), 2, 0);
+
+    tapToClickCheck_ = new QCheckBox(QStringLiteral("触摸板点击（Tap 单击）"), page);
+    tapToClickCheck_->setChecked(current.tapToClick);
+    grid->addWidget(tapToClickCheck_, 3, 1);
+    grid->addWidget(makeLabel(QStringLiteral("触摸板")), 3, 0);
+
+    // 键盘重复：速率 1..100 字符/秒，延迟 100..5000 ms
+    grid->addWidget(makeLabel(QStringLiteral("重复速率")), 4, 0);
+    auto* rateRow = new QHBoxLayout;
+    repeatRateSlider_ = new QSlider(Qt::Horizontal, page);
+    repeatRateSlider_->setRange(1, 100);
+    repeatRateSlider_->setValue(qBound(1, current.repeatRate, 100));
+    rateRow->addWidget(repeatRateSlider_, 1);
+    repeatRateValue_ = new QLabel(page);
+    rateRow->addWidget(repeatRateValue_);
+    grid->addLayout(rateRow, 4, 1);
+
+    grid->addWidget(makeLabel(QStringLiteral("重复延迟")), 5, 0);
+    auto* delayRow = new QHBoxLayout;
+    repeatDelaySlider_ = new QSlider(Qt::Horizontal, page);
+    repeatDelaySlider_->setRange(100, 5000);
+    repeatDelaySlider_->setSingleStep(100);
+    repeatDelaySlider_->setValue(qBound(100, current.repeatDelay, 5000));
+    delayRow->addWidget(repeatDelaySlider_, 1);
+    repeatDelayValue_ = new QLabel(page);
+    delayRow->addWidget(repeatDelayValue_);
+    grid->addLayout(delayRow, 5, 1);
+    lay->addLayout(grid);
+
+    auto* btnRow = new QHBoxLayout;
+    auto* applyBtn = new QPushButton(QStringLiteral("应用"), page);
+    btnRow->addWidget(applyBtn);
+    btnRow->addStretch(1);
+    lay->addLayout(btnRow);
+
+    inputStatus_ = new QLabel(QStringLiteral("（从配置加载，未修改）"), page);
+    inputStatus_->setStyleSheet(QStringLiteral("color: %1;")
+        .arg(theme::kTextSecondary().name()));
+    inputStatus_->setWordWrap(true);
+    lay->addWidget(inputStatus_);
+    lay->addStretch(1);
+
+    // 值标签实时更新（% 转义为 %% 且一次 arg 完成，避免二次解析）。
+    auto updateSpeedLabel = [this]() {
+        const int v = pointerSpeedSlider_->value();
+        pointerSpeedValue_->setText(QStringLiteral("%1%%").arg(
+            (v > 0 ? QStringLiteral("+") : QString()) + QString::number(v)));
+    };
+    connect(pointerSpeedSlider_, &QSlider::valueChanged, this,
+            [updateSpeedLabel](int) { updateSpeedLabel(); });
+    updateSpeedLabel();
+    auto updateRateLabel = [this]() {
+        repeatRateValue_->setText(QStringLiteral("%1 字符/秒")
+            .arg(repeatRateSlider_->value()));
+    };
+    connect(repeatRateSlider_, &QSlider::valueChanged, this,
+            [updateRateLabel](int) { updateRateLabel(); });
+    updateRateLabel();
+    auto updateDelayLabel = [this]() {
+        repeatDelayValue_->setText(QStringLiteral("%1 ms")
+            .arg(repeatDelaySlider_->value()));
+    };
+    connect(repeatDelaySlider_, &QSlider::valueChanged, this,
+            [updateDelayLabel](int) { updateDelayLabel(); });
+    updateDelayLabel();
+
+    connect(applyBtn, &QPushButton::clicked,
+            this, &SettingsWindow::saveInputSettings);
+
+    pages_->addWidget(page);
+    categoryList_->addItem(QStringLiteral("输入设备"));
+}
+
+void SettingsWindow::saveInputSettings() {
+    w10de::ipc::InputSettings s;
+    s.pointerSpeed = pointerSpeedSlider_->value() / 100.0;
+    s.naturalScroll = naturalScrollCheck_->isChecked();
+    s.leftHanded = leftHandedCheck_->isChecked();
+    s.tapToClick = tapToClickCheck_->isChecked();
+    s.repeatRate = repeatRateSlider_->value();
+    s.repeatDelay = repeatDelaySlider_->value();
+
+    if (!w10de::ipc::InputSettings::save(configPath().toStdString(), s)) {
+        QMessageBox::warning(this, QStringLiteral("设置"),
+            QStringLiteral("保存配置失败（%1）。").arg(configPath()));
+        inputStatus_->setText(QStringLiteral("保存失败，未应用。"));
+        return;
+    }
+
+    // 热应用：org.w10de.Compositor SetInputSettings（d:b:b:b:i:i）。
+    // 失败（headless/合成器未运行）降级：配置已保存，重启会话生效。
+    QDBusInterface iface(QStringLiteral("org.w10de.Compositor"),
+                         QStringLiteral("/Outputs"),
+                         QStringLiteral("org.w10de.Compositor"),
+                         QDBusConnection::sessionBus(), this);
+    if (!iface.isValid()) {
+        inputStatus_->setText(QStringLiteral(
+            "配置已保存；合成器未运行（headless），重启会话后生效。"));
+        return;
+    }
+    QDBusMessage reply = iface.call(QStringLiteral("SetInputSettings"),
+        QVariant(s.pointerSpeed), QVariant(s.naturalScroll),
+        QVariant(s.leftHanded), QVariant(s.tapToClick),
+        QVariant(s.repeatRate), QVariant(s.repeatDelay));
+    if (reply.type() != QDBusMessage::ReplyMessage) {
+        inputStatus_->setText(QStringLiteral(
+            "配置已保存；热应用失败（%1），重启会话后生效。")
+            .arg(reply.errorMessage()));
+        return;
+    }
+    inputStatus_->setText(QStringLiteral(
+        "已保存并热应用：速度 %1%，自然滚动 %2，左手 %3，点击 %4，重复 %5/%6ms。")
+        .arg(s.pointerSpeed * 100.0)
+        .arg(s.naturalScroll ? QStringLiteral("开") : QStringLiteral("关"))
+        .arg(s.leftHanded ? QStringLiteral("开") : QStringLiteral("关"))
+        .arg(s.tapToClick ? QStringLiteral("开") : QStringLiteral("关"))
+        .arg(s.repeatRate).arg(s.repeatDelay));
 }
 
 }  // namespace w10de::settings

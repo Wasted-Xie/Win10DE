@@ -1,6 +1,7 @@
 #include "compositor/dbus_service.h"
 
 #include "compositor/output.h"
+#include "compositor/seat.h"
 #include "compositor/server.h"
 #include "compositor/util.h"
 
@@ -8,6 +9,8 @@
 
 #include <cerrno>
 #include <cstring>
+
+#include "ipc/inputsettings.h"
 
 namespace w10de {
 
@@ -41,6 +44,28 @@ bool nextString(DBusMessageIter* it, const char** out) {
         return false;
     }
     dbus_message_iter_get_basic(it, out);
+    dbus_message_iter_next(it);
+    return true;
+}
+
+// 参数迭代辅助：取 double（KDE-GAP 中优先：输入设备设置）。
+bool nextDouble(DBusMessageIter* it, double* out) {
+    if (dbus_message_iter_get_arg_type(it) != DBUS_TYPE_DOUBLE) {
+        return false;
+    }
+    dbus_message_iter_get_basic(it, out);
+    dbus_message_iter_next(it);
+    return true;
+}
+
+// 参数迭代辅助：取布尔（DBUS_TYPE_BOOLEAN）。
+bool nextBool(DBusMessageIter* it, bool* out) {
+    if (dbus_message_iter_get_arg_type(it) != DBUS_TYPE_BOOLEAN) {
+        return false;
+    }
+    dbus_bool_t v = FALSE;
+    dbus_message_iter_get_basic(it, &v);
+    *out = v != FALSE;
     dbus_message_iter_next(it);
     return true;
 }
@@ -275,6 +300,53 @@ bool CompositorDbus::handleMethod(const char* method, DBusMessage* message,
         }
         compositor_.arrangeLayers();
         wlr_log(WLR_INFO, "dbus: SetMode '%s' %dx%d", name, w, h);
+        *reply = dbus_message_new_method_return(message);
+        return true;
+    }
+    if (std::strcmp(method, "GetInputSettings") == 0) {
+        // KDE-GAP 中优先：返回当前生效的输入设备设置。
+        const auto s = compositor_.seat()->inputSettings();
+        *reply = dbus_message_new_method_return(message);
+        DBusMessageIter root;
+        dbus_message_iter_init_append(*reply, &root);
+        dbus_message_iter_append_basic(&root, DBUS_TYPE_DOUBLE, &s.pointerSpeed);
+        dbus_bool_t natural = s.naturalScroll;
+        dbus_bool_t left = s.leftHanded;
+        dbus_bool_t tap = s.tapToClick;
+        dbus_message_iter_append_basic(&root, DBUS_TYPE_BOOLEAN, &natural);
+        dbus_message_iter_append_basic(&root, DBUS_TYPE_BOOLEAN, &left);
+        dbus_message_iter_append_basic(&root, DBUS_TYPE_BOOLEAN, &tap);
+        // 审查 L：DBUS_TYPE_INT32 须传 int32_t 局部变量（libdbus 按 4 字节读）。
+        const int32_t rate = static_cast<int32_t>(s.repeatRate);
+        const int32_t delay = static_cast<int32_t>(s.repeatDelay);
+        dbus_message_iter_append_basic(&root, DBUS_TYPE_INT32, &rate);
+        dbus_message_iter_append_basic(&root, DBUS_TYPE_INT32, &delay);
+        return true;
+    }
+    if (std::strcmp(method, "SetInputSettings") == 0) {
+        // KDE-GAP 中优先：热应用输入设备设置（参数
+        // d:b:b:b:i:i = speed, natural, left, tap, repeat_rate, repeat_delay）。
+        double speed = 0.0;
+        bool natural = false, left = false, tap = false;
+        int32_t rate = 25, delay = 600;
+        if (!nextDouble(args, &speed) || !nextBool(args, &natural) ||
+                !nextBool(args, &left) || !nextBool(args, &tap) ||
+                !nextInt32(args, &rate) || !nextInt32(args, &delay) ||
+                speed < -1.0 || speed > 1.0 || rate < 1 || rate > 100 ||
+                delay < 100 || delay > 5000) {
+            return false;
+        }
+        w10de::ipc::InputSettings s;
+        s.pointerSpeed = speed;
+        s.naturalScroll = natural;
+        s.leftHanded = left;
+        s.tapToClick = tap;
+        s.repeatRate = rate;
+        s.repeatDelay = delay;
+        compositor_.seat()->applyInputSettings(s);
+        wlr_log(WLR_INFO, "dbus: SetInputSettings speed=%.2f natural=%d left=%d "
+                "tap=%d repeat=%d/%d", speed, natural ? 1 : 0, left ? 1 : 0,
+                tap ? 1 : 0, rate, delay);
         *reply = dbus_message_new_method_return(message);
         return true;
     }

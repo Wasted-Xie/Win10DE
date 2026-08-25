@@ -29,6 +29,7 @@ enum class ShortcutAction {
     SnapRight,      // 右半屏
     SnapUp,         // 最大化（Win+↑ 语义）
     SnapDown,       // 还原
+    SnapLayout,     // Snap 布局选择器（Win+Z；KDE-GAP #3）
     Lock,           // 锁屏
     Quit,           // 退出合成器
     Clipboard,      // 剪贴板历史（Win+V）

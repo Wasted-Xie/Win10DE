@@ -10,6 +10,7 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -49,6 +50,15 @@ struct DiskCounters {
     unsigned long long readBytes = 0, writeBytes = 0;
 };
 
+// 进程信息（/proc 扫描；KDE-GAP 高优先 #2 进程管理器）。
+struct ProcInfo {
+    int pid = 0;
+    std::string name;     // comm（截断）
+    std::string cmdline;  // 完整命令行（空格连接；内核线程用 name）
+    double cpuPercent = 0.0;  // 相对单核使用率（两次采样增量）
+    unsigned long long rssKB = 0;
+};
+
 class SysInfo {
 public:
     SysInfo();
@@ -76,6 +86,15 @@ public:
         return cpuPerCoreHistory_;
     }
     static constexpr int kHistory = 60;
+
+    // ---- 进程管理（KDE-GAP #2）----
+    // 采样进程列表（CPU% 为相对上次 sample() 的增量；首次为 0）。
+    // 返回按 cpuPercent 降序的进程。
+    std::vector<ProcInfo> processList();
+
+    // 终止进程（SIGTERM；force=true 发 SIGKILL。返回 false 表示失败/权限
+    // 不足；pid<=1 始终保护）。审查 M3：支持强制结束。
+    static bool killProcess(int pid, bool force = false);
 
 private:
     // 读取 /proc 原始数据（失败返回默认 0/空）。preferred 非空时优先返回
@@ -107,6 +126,9 @@ private:
     double netRxKBps_ = 0.0, netTxKBps_ = 0.0;
     double diskReadMBps_ = 0.0, diskWriteMBps_ = 0.0;
     std::string netInterface_, diskDevice_;
+    // 进程 CPU 增量缓存（pid → utime+stime；进程退出自动失效）。
+    std::map<int, unsigned long long> prevProcCpu_;
+    unsigned long long prevCpuTotalTicks_ = 0;  // 上次总 CPU ticks（进程%计算）
 };
 
 }  // namespace w10de::monitor

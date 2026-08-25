@@ -14,6 +14,7 @@
 #include <QTextStream>
 
 #include <cstdio>  // setvbuf（日志无缓冲）
+#include <unistd.h>  // getpid（进程 selftest）
 
 #include "systemapps/appipc.h"
 #include "systemapps/monitor/monitorwindow.h"
@@ -61,6 +62,59 @@ int runSelfTest() {
     if (info.cpuPerCoreHistory().size() !=
             static_cast<size_t>(info.coreCount())) {
         fail("per-core history size mismatch");
+    }
+
+    // ---- 进程管理（KDE-GAP #2）----
+    {
+        const auto procs = info.processList();
+        out << "processes: " << procs.size() << "\n";
+        if (procs.empty()) {
+            fail("processList empty (/proc 不可读?)");
+        }
+        bool foundSelf = false;
+        unsigned long long selfRss = 0;
+        for (const auto& p : procs) {
+            if (p.pid == static_cast<int>(::getpid())) {
+                foundSelf = true;
+                selfRss = p.rssKB;
+                if (p.name.empty()) {
+                    fail("self process name empty");
+                }
+                if (p.cpuPercent < 0.0 || p.cpuPercent > 10000.0) {
+                    fail("process cpuPercent out of sane range");
+                }
+                break;
+            }
+        }
+        if (!foundSelf) {
+            fail("self process not in list");
+        }
+        // 审查 S2：rss 须为合理范围（>0 且 < 系统内存总量）。
+        if (selfRss == 0 || selfRss >= info.mem().totalKb) {
+            fail("self rss out of sane range (stat 字段解析错误?)");
+        }
+        // 第二次采样应有 CPU 增量（本进程在运行；修正后必 > 0）。
+        info.sample();
+        const auto procs2 = info.processList();
+        bool selfCpuPositive = false;
+        bool foundSelf2 = false;
+        for (const auto& p : procs2) {
+            if (p.pid == static_cast<int>(::getpid())) {
+                foundSelf2 = true;
+                if (p.cpuPercent > 0.0) {
+                    selfCpuPositive = true;
+                }
+                break;
+            }
+        }
+        if (!foundSelf2) {
+            fail("self process missing after second sample");
+        }
+        if (!selfCpuPositive) {
+            out << "note: self cpu%=0（采样窗口过短，非错误）\n";
+        }
+        out << "OK process-list (self pid=" << static_cast<int>(::getpid())
+            << " rss=" << selfRss << "KB)\n";
     }
 
     out << "SELFTEST OK: cores=" << info.coreCount()

@@ -84,6 +84,7 @@ ShortcutBinding defaultBinding(ShortcutAction action) {
     case ShortcutAction::SnapRight: b.sym = XKB_KEY_Right; break;
     case ShortcutAction::SnapUp: b.sym = XKB_KEY_Up; break;
     case ShortcutAction::SnapDown: b.sym = XKB_KEY_Down; break;
+    case ShortcutAction::SnapLayout: b.sym = XKB_KEY_z; break;
     case ShortcutAction::Lock: b.sym = XKB_KEY_l; break;
     case ShortcutAction::Quit: b.sym = XKB_KEY_Escape; break;
     case ShortcutAction::Clipboard: b.sym = XKB_KEY_v; break;
@@ -107,6 +108,7 @@ const char* shortcutActionName(ShortcutAction action) {
     case ShortcutAction::SnapRight: return "move_right";
     case ShortcutAction::SnapUp: return "move_up";
     case ShortcutAction::SnapDown: return "move_down";
+    case ShortcutAction::SnapLayout: return "snap_layout";
     case ShortcutAction::Lock: return "lock";
     case ShortcutAction::Quit: return "quit";
     case ShortcutAction::Clipboard: return "clipboard";

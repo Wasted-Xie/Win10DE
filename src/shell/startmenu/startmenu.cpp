@@ -5,6 +5,7 @@
 #include <QDesktopServices>
 #include <QDir>
 #include <QDirIterator>
+#include <QFileInfo>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QKeyEvent>
@@ -15,9 +16,12 @@
 #include <QProcess>
 #include <QRegularExpression>
 #include <QStandardPaths>
+#include <QTimer>
 #include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
+
+#include "ipc/fileindex.h"
 
 #include "startmenu/appmodel.h"
 #include "startmenu/flowlayout.h"
@@ -150,9 +154,25 @@ StartMenu::StartMenu(QWidget* parent) : QWidget(parent) {
         .arg(theme::kTaskbarBackground().name(),
              theme::kTextPrimary().name(),
              theme::kHoverBackground().name()));
-    connect(searchBox_, &QLineEdit::textChanged,
-            this, &StartMenu::onSearchChanged);
+    // 搜索防抖（审查 M4：150ms 合并连续输入，避免每键全表扫描 + UI 重建）。
+    searchDebounce_ = new QTimer(this);
+    searchDebounce_->setSingleShot(true);
+    searchDebounce_->setInterval(150);
+    connect(searchDebounce_, &QTimer::timeout,
+            this, [this] { onSearchChanged(searchBox_->text()); });
+    connect(searchBox_, &QLineEdit::textChanged, this, [this] {
+        searchDebounce_->start();
+    });
     ll->addWidget(searchBox_);
+
+    // KDE-GAP #5：后台文件索引（启动时开始；完成信号刷新进行中的搜索）。
+    fileIndex_ = new w10de::ipc::FileIndex(this);
+    connect(fileIndex_, &w10de::ipc::FileIndex::indexingFinished, this, [this] {
+        if (searchActive_) {
+            onSearchChanged(searchBox_->text());
+        }
+    });
+    fileIndex_->startIndexing();
 
     appList_ = new QListWidget(listHost);
     appList_->setStyleSheet(QStringLiteral(
@@ -344,24 +364,9 @@ QStringList StartMenu::searchFiles(const QString& keyword) const {
     if (keyword.isEmpty()) {
         return out;
     }
-    const QString home =
-        QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
-    if (home.isEmpty()) {
-        return out;
-    }
-    // 递归主目录（数量上限兜底，避免大目录卡 UI）。
-    constexpr int kMaxResults = 15;
-    QDirIterator it(home,
-                    QDir::Files | QDir::NoDotAndDotDot | QDir::Hidden,
-                    QDirIterator::Subdirectories);
-    while (it.hasNext()) {
-        it.next();
-        if (it.fileName().contains(keyword, Qt::CaseInsensitive)) {
-            out.append(it.filePath());
-            if (out.size() >= kMaxResults) {
-                break;
-            }
-        }
+    // KDE-GAP #5：查询后台文件索引（名称 + 内容；替代实时 QDirIterator）。
+    if (fileIndex_ != nullptr) {
+        return fileIndex_->search(keyword, 15);
     }
     return out;
 }
@@ -388,16 +393,25 @@ void StartMenu::onSearchChanged(const QString& text) {
     }
     const QStringList files = searchFiles(keyword);
     for (const QString& path : files) {
+        // 审查 L7：显示文件名（长路径不可读），tooltip 保留全路径。
         auto* row = new QListWidgetItem(
             QIcon::fromTheme(QStringLiteral("text-x-generic")),
-            path);
+            QFileInfo(path).fileName());
         row->setData(Qt::UserRole, QStringLiteral("file:") + path);
         row->setToolTip(path);
         appList_->addItem(row);
     }
     if (appList_->count() == 0) {
-        auto* empty = new QListWidgetItem(
-            QStringLiteral("没有找到 \"%1\"").arg(keyword));
+        // KDE-GAP #5：索引未完成/被截断时提示（区别于"无结果"）。
+        QString emptyText;
+        if (fileIndex_ != nullptr && !fileIndex_->ready()) {
+            emptyText = QStringLiteral("正在索引文件…");
+        } else if (fileIndex_ != nullptr && fileIndex_->truncated()) {
+            emptyText = QStringLiteral("索引已截断（文件过多），可能缺结果");
+        } else {
+            emptyText = QStringLiteral("没有找到 \"%1\"").arg(keyword);
+        }
+        auto* empty = new QListWidgetItem(emptyText);
         empty->setFlags(Qt::NoItemFlags);
         appList_->addItem(empty);
     }

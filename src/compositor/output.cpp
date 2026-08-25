@@ -185,6 +185,14 @@ void Output::handleFrame() {
             compositor_.seat() != nullptr) {
         compositor_.seat()->debugShowAltTab();
     }
+    // Snap 布局验证（KDE-GAP #3）：指定帧显示布局选择器（headless 截图验证 UI）。
+    static bool snaplayoutTestFired = false;
+    if (compositor_.options().snaplayoutTestFrame > 0 &&
+            framesRendered_ == compositor_.options().snaplayoutTestFrame &&
+            !snaplayoutTestFired && compositor_.seat() != nullptr) {
+        snaplayoutTestFired = true;
+        compositor_.seat()->debugShowSnapLayout();
+    }
     // 剪贴板历史验证：指定帧触发 Win+V 面板（headless 截图验证 UI）。
     // 多输出时各输出帧号独立，用进程级标志保证只触发一次（审查 L5）。
     static bool clipboardTestFired = false;

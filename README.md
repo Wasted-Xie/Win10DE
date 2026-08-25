@@ -131,12 +131,105 @@ Linux 上的 Windows 10 风格桌面环境，从零实现。
        BT 适配器+设备解析全过）；headless 渲染 PASS；真机需 NetworkManager/
        Bluez 验证真实连接）——**第三批 5 项全部完成**；后续对标 KDE 的差距
        清单见 [docs/KDE-GAP.md](docs/KDE-GAP.md)（按类别+优先级：软件中心/
-       进程管理/Snap 布局/锁屏密码/文件索引为高优先）
+       进程管理/Snap 布局/锁屏密码/文件索引为高优先）；**KDE-GAP 高优先 #1
+       软件中心 ✅**（`src/systemapps/software/`：Win10"应用和功能"风格——.desktop
+       扫描（系统/用户/Flatpak 导出目录，locale 优先名）、网格+搜索+详情+
+       启动（分离式）、Flatpak 应用识别与卸载（flatpak CLI，真机可用）；
+       `--selftest`（扫描 12 应用 + locale 回退单测）PASS + headless 渲染
+       PASS（应用网格 + 选中高亮）；子代理审查修复：NoDisplay/Hidden 过滤
+       （12→7 应用）、用户级 Flatpak 目录、flatpakId 解析健壮性、异步卸载、
+       深色主题、图标探测增强）→ **高优先 #2 进程管理器 ✅**（系统监视器新增
+       "进程"页：/proc 进程列表（PID/名称/CPU%/内存，stat 字段解析 + 两次
+       采样增量 CPU）、结束进程（SIGTERM/SIGKILL 强制、pid<=1 保护、自杀
+       防护）；`--selftest`（进程列表 + self 定位 + rss 范围断言）PASS +
+       渲染 PASS；**子代理审查 S1 严重字段索引修复**（utime/stime/rss 括号后
+       偏移 11/12/21，原实现取到 cutime/cstime/startcode 致 CPU% 恒 0/
+       内存显示地址值））→ **高优先 #3 Snap 布局选择器 ✅**（`src/compositor/
+       snaplayout.{h,cpp}`：Win+Z 显示 3×3 网格（scene overlay，半透明面板+
+       9 格+中心高亮）、方向键选择、Enter 应用（View::snapToRect：保存恢复
+       点+动画贴到选中格区域）、Esc 取消；`--snaplayout-test` 帧钩子 headless
+       验证 PASS（面板/格/高亮像素确认）；子代理审查修复（S1 target UAF/
+        S2 取消不可达/S3 Alt+Tab 死锁 + M3 布局还原/M4 锁屏拒绝/M5 余数））
+        → **高优先 #4 锁屏密码验证 ✅**（w10lock 接入 PAM（libpam，"login" 服务）
+        + xkbcommon keysym 解析：密码输入 UI（圆点/提示/错误）、回车验证成功
+        解锁、失败重试（含 0.5s 延迟）；**fail-closed**：非 root 时 PAM 不可用
+        → 提示"验证服务不可用"且**不提供任意键解锁**（安全；唯一出口为系统
+        控制台/会话重启；真机建议 setuid root 安装 w10lock）；PAM 实测（错误
+        密码 Denied）+ 锁屏渲染验证 PASS；子代理审查 S1-S2/M1-M4 全修复
+        （fail-closed、utf8 字符集、密码擦除、探测缓存））→ **高优先 #5 文件
+        索引搜索 ✅**（`src/shell/ipc/fileindex.{h,cpp}`：Baloo 等价 MVP——后台
+        QThread 索引主目录（排除隐藏/噪声目录，5 万上限）+ 名称索引（子串）
+        + 内容索引（小文本文件分词）；开始菜单搜索框改查索引（替代实时
+        QDirIterator），索引未完成显示"正在索引"；单测 7/7 PASS（名称/内容/
+        排除/大小写）+ 启动冒烟 PASS；子代理审查 S1-S2/M1-M4 全修复（析构
+        中断、内存闸门、Unicode 中文分词、多词交集、防抖、文件名显示）
+        ）——**高优先 5 项全部完成**；**中优先 #1 输入设备设置 ✅**
+        （`src/ipc/inputsettings.{h,cpp}`：[input] 配置段（pointer_speed/
+        natural_scroll/left_handed/tap_to_click/repeat_rate=25/repeat_delay=600），
+        compositor 与 w10settings 共享读写；compositor 侧
+        `Seat::applyInputSettings/applyPointerSettings`——键盘重复率
+        （wlr_keyboard_set_repeat_info）+ libinput 指针配置（accel/natural
+        scroll/left-handed/tap；`wlr_input_device_is_libinput` 判定 +
+        `wlr_libinput_get_device_handle` 取句柄——0.19 无
+        get_libinput_device；headless 无设备自动降级），Seat 启动加载 +
+        handleNewInput 热插拔应用（含 destroy 监听防悬垂）；D-Bus 热应用
+        （GetInputSettings/SetInputSettings，d:b:b:b:i:i 含越界校验）；
+        w10settings"输入设备"页（指针速度滑块/自然滚动/左手/触摸板点击/
+        重复速率/延迟 + 应用：写 config + D-Bus 热应用，合成器不在降级提示）；
+        `--selftest` 增 input-settings 断言（读写/默认/上下界钳制/NaN 与非
+        数字回退）PASS + D-Bus 端到端（默认 0/25/600 → Set 0.5/40/300 →
+        回读一致 → 越界拒绝）+ `--page input` 渲染 PASS（窗口 860×560 +
+        滑块高亮像素确认）；**子代理审查 S1/M 全修复**（S1 指针设备热拔插
+        悬垂 UAF——PointerDevice 条目 + destroy 监听移除；M strtod NaN
+        穿透钳制——endptr/isfinite 校验回退 0.0）+ L 系（int32_t 局部
+        变量、selftest 容差、上下界钳制测试））→ **中优先 #2 文本/PDF/
+        图像查看器 ✅**（`src/systemapps/viewer/`：三合一查看器——文件
+        类型探测（`filetype.{h,cpp}`：扩展名白名单 + 内容嗅探——PDF
+        魔数 %PDF- 优先防伪装、无 NUL UTF-8 文本兜底含 overlong/
+        surrogate 约束）；文本（QPlainTextEdit 只读，UTF-8/UTF-16 LE/
+        BE/UTF-32 BOM 处理）、图像（QImageReader 含 svg，缩放/适配
+        窗口，目标尺寸 clamp 防内存爆）、PDF（poppler-qt6——Okular
+        同款后端，上一页/下一页/缩放/适配，渲染尺寸 clamp 防恶意大页
+        DoS）；appipc 单实例（org.w10de.Apps.Viewer，Activate(path)）
+        + .desktop MimeType 声明（xdg-open 可关联）；`--selftest`
+        全过（类型探测含伪装 PDF/二进制 + 中文文本 + 生成 PNG 解码
+        尺寸/颜色 + QPdfWriter 2 页 PDF 加载/渲染非空白）+ headless
+        三态渲染 PASS（text 深色页/image 渐变图/pdf 白色 A4 页像素
+        确认）；**子代理审查 M1-M5 全修复**（M1 坏 PDF 失败不毁旧
+        文档、M2 PDF 渲染尺寸上限、M3 图像缩放上限、M4 UTF-32 BOM
+        误判、M5 %F→%f 单文件语义）+ L 系（UTF-8 严格化/-- 分隔符/
+        先加载后显示/PNG 颜色断言等）；依赖新增：poppler-qt6
+        （Arch: pacman -S poppler poppler-qt6 poppler-data））→ **中优先
+        #3 回收站窗口 ✅**（`src/systemapps/trash/`：Win10 回收站等价——
+        数据层 `trashstore.{h,cpp}`（freedesktop Trash spec：
+        <XDG_DATA_HOME>/Trash/{files,info}——list 遍历 + info 解析
+        （Path 百分号解码/DeletionDate ISO，删除时间倒序）、restore
+        移回原路径（父目录自动创建、目标冲突改名 base(1).ext、info
+        删除）、permanentDelete 彻底删除、empty 清空（含孤儿
+        trashinfo 清理）；与 w10explorer FileOps::moveToTrash 同格式
+        互操作）；窗口 `trashwindow.{h,cpp}`：三列列表（名称/原始
+        位置/删除时间）+ 工具栏（恢复/彻底删除/清空）+ 空态"回收站
+        为空"+ 双击恢复 + 操作确认框；appipc 单实例
+        （org.w10de.Apps.Trash）+ .desktop；`--selftest` 全过（列表
+        解析含中文路径往返/缺 info 容错 → 冲突改名恢复 → 彻底删除 →
+        清空）；headless 渲染 PASS（有内容态 2 行列表 vs 空态像素
+        区分）；开发修复：DeletionDate 前缀偏移、restore 从 info 读
+        原始路径（调用方只传 name）；**子代理审查 S1-S2/M1-M7 全修复**
+        （S1-1 symlink-to-dir 彻底删除会递归摧毁链接目标内容（Qt
+        6.11 实测）——isSymLink 分支优先只删链接；S1-2 restore 相对/
+        .. 路径可错位写入——cleanPath+isAbsolute 拒绝；M1 孤儿 info
+        误删有效条目——isSymLink 补判；M2 条目名路径穿越校验；M3
+        排序键混用；M4 操作结果消息被 refresh 覆盖——超时消息；M5
+        无 D-Bus 静默退出——降级运行；M6 selftest 补 symlink/相对
+        Path/孤儿断言；M7 moveToTrash 先落 info 再移文件失败回滚
+        （w10explorer 互操作））+ L 系（上限 100000/恢复按钮禁用/
+        幂等清理等）
 - [x] 编译与冒烟验证（headless 运行 + 截图 + 像素校验，2026-08 Arch/WSL2 通过）
 - [x] 完整渲染验证（compositor + w10shell 同跑：桌面壁纸渐变 + 任务栏渲染成功，2026-08）
 - [ ] 真机/嵌套环境验证（DRM、XWayland 运行时、鼠标键盘实际交互）
 
-详见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+详见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)；
+未修复项/已知简化清单见 [docs/UNFIXED.md](docs/UNFIXED.md)。
 
 ## 目录结构
 

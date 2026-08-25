@@ -19,8 +19,11 @@ extern "C" {
 
 #include <memory>
 #include <set>
+#include <vector>
 
 #include "compositor/alttab.h"
+#include "compositor/snaplayout.h"
+#include "ipc/inputsettings.h"
 #include "ipc/shortcuts.h"
 
 namespace w10de {
@@ -40,6 +43,15 @@ public:
 
     // 新输入设备接入（由 Compositor::handleNewInput 转发）。
     void handleNewInput(wlr_input_device* device);
+
+    // ---- 输入设备设置（KDE-GAP 中优先：鼠标/键盘/触摸板）----
+    // 应用 [input] 配置到当前设备（指针 libinput + 键盘重复率）；
+    // handleNewInput 与 D-Bus 热应用均调用。
+    void applyInputSettings(const w10de::ipc::InputSettings& s);
+    // 当前生效设置（D-Bus GetInputSettings）。
+    w10de::ipc::InputSettings inputSettings() const { return inputSettings_; }
+    // 单个指针设备应用 libinput 配置（applyInputSettings 与热插拔共用）。
+    void applyPointerSettings(wlr_input_device* device);
 
     // ---- 窗口交互（由 View 的 request_move/resize 触发）----
     void beginMove(View* view);
@@ -71,6 +83,8 @@ public:
     void updateHover();
     // headless 验证（--alttab-test）：显示切换器（不应用选择）。
     void debugShowAltTab();
+    // headless 验证：显示 Snap 布局选择器（--snaplayout-test 帧钩子）。
+    void debugShowSnapLayout();
 
     wlr_seat* seat() const { return seat_; }
 
@@ -98,6 +112,11 @@ private:
     static void handleKeyboardModifiers(wl_listener* l, void* data);
     static void handleKeyboardDestroy(wl_listener* l, void* data);
 
+    // ---- 指针设备生命周期 ----
+    // 设备销毁回调（审查 S1：指针设备无 destroy 监听 → 设备移除后
+    // pointerDevices_ 残留悬垂指针，D-Bus 热应用遍历即 UAF）。
+    static void handlePointerDestroy(wl_listener* l, void* data);
+
     // ---- 剪贴板/拖放请求 ----
     static void handleRequestSetSelection(wl_listener* l, void* data);
     static void handleRequestSetPrimarySelection(wl_listener* l, void* data);
@@ -122,6 +141,18 @@ private:
     XView* hoverXView_ = nullptr;
     // Alt+Tab 窗口切换器（Win10 风格）。
     std::unique_ptr<AltTabSwitcher> alttab_;
+    // Snap 布局选择器（KDE-GAP #3：Win+Z 3×3 网格）。
+    std::unique_ptr<SnapLayoutSwitcher> snaplayout_;
+    // 输入设备设置（KDE-GAP 中优先；启动时从 [input] 加载）。
+    w10de::ipc::InputSettings inputSettings_;
+    // 指针设备条目（libinput 配置应用遍历用；含 destroy 监听防悬垂——
+    // 审查 S1：设备热拔插后必须从 vector 移除，否则 D-Bus 热应用 UAF）。
+    struct PointerDevice {
+        Seat* seat = nullptr;
+        wlr_input_device* device = nullptr;
+        wl_listener destroyListener = {};
+    };
+    std::vector<std::unique_ptr<PointerDevice>> pointerDevices_;
     // 已转发 press 的按键（按 button 跟踪，release 只转发有对应 press 的
     // 按键，避免"幽灵 release"；标题栏/空白处吞掉的 press 不在此集合）。
     std::set<uint32_t> pressedButtons_;

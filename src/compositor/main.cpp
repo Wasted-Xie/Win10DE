@@ -33,6 +33,7 @@ void printUsage(const char* prog) {
         "  --switch-ws <f>:<n> 渲染到第 f 帧时切换到工作区 n（可重复；headless 验证用）\n"
         "  --snap-test         每个窗口 map 后自动贴左半屏（M8 Aero Snap 验证）\n"
         "  --alttab-test <f>   渲染到第 f 帧时显示 Alt+Tab 切换器（headless 验证）\n"
+        "  --snaplayout-test <f> 渲染到第 f 帧时显示 Snap 布局选择器（headless 验证）\n"
         "  --clipboard-test <f> 渲染到第 f 帧时触发剪贴板历史面板（Win+V，headless 验证）\n"
         "  --shortcuts-dump    打印 [shortcuts] 配置生效的快捷键绑定后退出（验证用）\n"
         "  --verbose           输出调试日志\n"
@@ -135,6 +136,8 @@ int main(int argc, char* argv[]) {
             opts.alttabTestFrame = parseInt("--alttab-test");
         } else if (arg == "--clipboard-test") {
             opts.clipboardTestFrame = parseInt("--clipboard-test");
+        } else if (arg == "--snaplayout-test") {
+            opts.snaplayoutTestFrame = parseInt("--snaplayout-test");
         } else if (arg == "--shortcuts-dump") {
             opts.shortcutsDump = true;
         } else if (arg == "--help") {

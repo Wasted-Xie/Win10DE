@@ -95,8 +95,15 @@ public:
     // 取消贴边：恢复 snap 前几何（Win+↓ 还原）。
     void unsnap();
     SnapEdge snapEdge() const { return snapEdge_; }
+    // Snap 布局选择器（KDE-GAP #3）：贴到任意矩形区域（保存恢复点 + 动画）。
+    void snapToRect(int x, int y, int w, int h);
+    // 布局贴边标记（审查 M3：Win+↓ 可还原；与 snapEdge_ 独立）。
+    bool layoutSnapped() const { return layoutSnapped_; }
     // 当前是否处于"占用整可用区"的布局态（最大化或贴边，Win+↓ 需还原）。
-    bool isFullAreaLayout() const { return maximized_ || snapEdge_ != SnapEdge::None; }
+    // 审查 M3：布局贴边（layoutSnapped_）纳入。
+    bool isFullAreaLayout() const {
+        return maximized_ || snapEdge_ != SnapEdge::None || layoutSnapped_;
+    }
 
     // ---- M8 窗口动画（帧插值）----
     // 平滑移动到 (x, y)（Snap/还原等布局操作用；拖动仍即时）。
@@ -159,6 +166,8 @@ private:
     bool minimized_ = false;
     // Aero Snap 贴边状态（M8；None=浮动）。
     SnapEdge snapEdge_ = SnapEdge::None;
+    // 布局贴边标记（KDE-GAP #3；snapToRect 设置，unsnap/SnapDown 还原）。
+    bool layoutSnapped_ = false;
     // M8 动画状态（位置插值；动画期间用户拖动会取消）。
     bool animActive_ = false;
     double animFromX_ = 0, animFromY_ = 0;

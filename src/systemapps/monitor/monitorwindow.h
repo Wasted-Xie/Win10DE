@@ -22,6 +22,8 @@
 
 class QLabel;
 class QProgressBar;
+class QTabWidget;
+class QTableWidget;
 class QTimer;
 class QWidget;
 
@@ -55,10 +57,14 @@ public:
 
 private:
     void refresh();
+    void refreshProcesses();
     void buildUi();
+    void killSelected();
 
     SysInfo* sys_ = nullptr;
     QTimer* timer_ = nullptr;
+    QTabWidget* tabs_ = nullptr;
+    // 性能页
     GraphWidget* cpuGraph_ = nullptr;
     QLabel* cpuSummary_ = nullptr;
     QLabel* perCoreLabels_[32] = {};
@@ -67,6 +73,8 @@ private:
     QLabel* memLabel_ = nullptr;
     QProgressBar* memBar_ = nullptr;
     QLabel* diskNetLabel_ = nullptr;
+    // 进程页（KDE-GAP #2）
+    QTableWidget* procTable_ = nullptr;
 };
 
 }  // namespace w10de::monitor

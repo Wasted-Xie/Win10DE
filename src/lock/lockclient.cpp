@@ -46,6 +46,7 @@ const wl_seat_listener kSeatListener = {
 }  // namespace
 
 LockClient::LockClient(wl_display* display) : display_(display) {
+    xkbCtx_ = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
     registry_ = wl_display_get_registry(display_);
     wl_registry_add_listener(registry_, &kRegistryListener, this);
     wl_display_roundtrip(display_);
@@ -53,6 +54,15 @@ LockClient::LockClient(wl_display* display) : display_(display) {
 }
 
 LockClient::~LockClient() {
+    if (xkbState_ != nullptr) {
+        xkb_state_unref(xkbState_);
+    }
+    if (xkbKeymap_ != nullptr) {
+        xkb_keymap_unref(xkbKeymap_);
+    }
+    if (xkbCtx_ != nullptr) {
+        xkb_context_unref(xkbCtx_);
+    }
     destroyBuffer();
     if (lockSurface_ != nullptr) {
         ext_session_lock_surface_v1_destroy(lockSurface_);
@@ -146,8 +156,8 @@ void LockClient::present(const void* argb, int width, int height) {
     wl_surface_commit(wlSurface_);
 }
 
-void LockClient::setKeyCallback(std::function<void()> onAnyKey) {
-    onAnyKey_ = std::move(onAnyKey);
+void LockClient::setKeySymCallback(std::function<void(xkb_keysym_t, bool)> cb) {
+    onKeySym_ = std::move(cb);
 }
 
 // ---- registry 绑定 ----
@@ -228,26 +238,58 @@ void LockClient::seatCapabilities(void* data, wl_seat* seat, uint32_t capabiliti
 void LockClient::seatName(void* /*data*/, wl_seat* /*seat*/, const char* /*name*/) {}
 
 void LockClient::keyboardKey(void* data, wl_keyboard* /*keyboard*/, uint32_t /*serial*/,
-                             uint32_t /*time*/, uint32_t /*key*/, uint32_t state) {
+                             uint32_t /*time*/, uint32_t key, uint32_t state) {
     auto* self = static_cast<LockClient*>(data);
-    if (state == WL_KEYBOARD_KEY_STATE_PRESSED && self->onAnyKey_) {
-        self->onAnyKey_();
+    // KDE-GAP #4：xkbcommon 解析 keysym（密码输入需要字符/退格/回车区分）。
+    if (self->onKeySym_ && self->xkbState_ != nullptr) {
+        const xkb_keycode_t code = key + 8;  // wlroots keycode 比 xkb 小 8
+        const xkb_keysym_t sym =
+            xkb_state_key_get_one_sym(self->xkbState_, code);
+        self->onKeySym_(sym, state == WL_KEYBOARD_KEY_STATE_PRESSED);
     }
 }
 
-void LockClient::keyboardKeymap(void* /*data*/, wl_keyboard* /*keyboard*/,
-                                uint32_t /*format*/, int32_t fd, uint32_t /*size*/) {
-    close(fd);  // M6 不解析键位（任意键解锁）。
+void LockClient::keyboardKeymap(void* data, wl_keyboard* /*keyboard*/,
+                                uint32_t format, int32_t fd, uint32_t size) {
+    // KDE-GAP #4：解析 keymap 供 keysym 查询（原实现直接关闭 fd）。
+    if (format != WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1 || size == 0) {
+        close(fd);
+        return;
+    }
+    char* map = static_cast<char*>(mmap(nullptr, size, PROT_READ, MAP_SHARED, fd, 0));
+    close(fd);
+    if (map == MAP_FAILED) {
+        return;
+    }
+    auto* self = static_cast<LockClient*>(data);
+    if (self->xkbKeymap_ != nullptr) {
+        xkb_keymap_unref(self->xkbKeymap_);
+    }
+    if (self->xkbState_ != nullptr) {
+        xkb_state_unref(self->xkbState_);
+    }
+    self->xkbKeymap_ = xkb_keymap_new_from_string(
+        self->xkbCtx_, map, XKB_KEYMAP_FORMAT_TEXT_V1, XKB_KEYMAP_COMPILE_NO_FLAGS);
+    munmap(map, size);
+    if (self->xkbKeymap_ != nullptr) {
+        self->xkbState_ = xkb_state_new(self->xkbKeymap_);
+    }
 }
 
 void LockClient::keyboardEnter(void* /*data*/, wl_keyboard* /*keyboard*/, uint32_t /*serial*/,
                                wl_surface* /*surface*/, wl_array* /*keys*/) {}
 void LockClient::keyboardLeave(void* /*data*/, wl_keyboard* /*keyboard*/,
                                uint32_t /*serial*/, wl_surface* /*surface*/) {}
-void LockClient::keyboardModifiers(void* /*data*/, wl_keyboard* /*keyboard*/,
-                                   uint32_t /*serial*/, uint32_t /*depressed*/,
-                                   uint32_t /*latched*/, uint32_t /*locked*/,
-                                   uint32_t /*group*/) {}
+void LockClient::keyboardModifiers(void* data, wl_keyboard* /*keyboard*/,
+                                   uint32_t /*serial*/, uint32_t depressed,
+                                   uint32_t latched, uint32_t locked,
+                                   uint32_t group) {
+    // KDE-GAP #4：更新 xkb 状态（Shift 等修饰影响 keysym 解析）。
+    auto* self = static_cast<LockClient*>(data);
+    if (self->xkbState_ != nullptr) {
+        xkb_state_update_mask(self->xkbState_, depressed, latched, locked, 0, 0, group);
+    }
+}
 void LockClient::keyboardRepeatInfo(void* /*data*/, wl_keyboard* /*keyboard*/,
                                     int32_t /*rate*/, int32_t /*delay*/) {}
 

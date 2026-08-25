@@ -11,6 +11,7 @@
 #include <QFile>
 #include <QTextStream>
 
+#include <cmath>  // std::isfinite/std::abs（审查：输入设置 NaN 校验）
 #include <cstdio>  // setvbuf（日志无缓冲）
 
 #include "systemapps/appipc.h"
@@ -18,6 +19,7 @@
 #include "systemapps/settings/defaultapps.h"
 #include "systemapps/settings/powerinfo.h"
 #include "systemapps/settings/settingswindow.h"
+#include "ipc/inputsettings.h"
 #include "theme/colors.h"
 
 namespace {
@@ -166,6 +168,97 @@ int runSelfTest(const QString& baseDir) {
         }
     }
     out << "OK mimeapps-defaults\n";
+
+    // 7) 输入设备设置 [input] 读写（load/save → 读回 + 边界钳制）。
+    {
+        const std::string cfgStr = cfg.toStdString();
+        w10de::ipc::InputSettings s;
+        s.pointerSpeed = -0.75;
+        s.naturalScroll = true;
+        s.leftHanded = false;
+        s.tapToClick = true;
+        s.repeatRate = 30;
+        s.repeatDelay = 250;
+        if (!w10de::ipc::InputSettings::save(cfgStr, s)) {
+            return fail(QStringLiteral("输入设置保存失败"));
+        }
+        const w10de::ipc::InputSettings r =
+            w10de::ipc::InputSettings::load(cfgStr);
+        // 审查 L：double 用容差比较（精确 == 对 -0.75 等二进制表示脆弱）。
+        if (std::abs(r.pointerSpeed - (-0.75)) > 1e-9 || !r.naturalScroll ||
+                r.leftHanded || !r.tapToClick || r.repeatRate != 30 ||
+                r.repeatDelay != 250) {
+            return fail(QStringLiteral("输入设置读回不一致"));
+        }
+        // 默认值：全新配置应回退内置默认（25/600，速度 0）。
+        const w10de::ipc::InputSettings d =
+            w10de::ipc::InputSettings::load(
+                (baseDir + QStringLiteral("/empty-config.ini")).toStdString());
+        if (d.pointerSpeed != 0.0 || d.naturalScroll || d.leftHanded ||
+                d.tapToClick || d.repeatRate != 25 || d.repeatDelay != 600) {
+            return fail(QStringLiteral("输入设置默认值不符"));
+        }
+        // 越界钳制：speed > 1 / < -1 应钳到边界（审查 L：补下限）。
+        {
+            w10de::ipc::InputSettings over = s;
+            over.pointerSpeed = 5.0;
+            const QString overPath = baseDir + QStringLiteral("/over.ini");
+            if (!w10de::ipc::InputSettings::save(
+                    overPath.toStdString(), over)) {
+                return fail(QStringLiteral("越界配置保存失败"));
+            }
+            const auto clamped =
+                w10de::ipc::InputSettings::load(overPath.toStdString());
+            if (clamped.pointerSpeed != 1.0) {
+                return fail(QStringLiteral("speed 上界未钳制"));
+            }
+            w10de::ipc::InputSettings under = s;
+            under.pointerSpeed = -5.0;
+            const QString underPath = baseDir + QStringLiteral("/under.ini");
+            if (!w10de::ipc::InputSettings::save(
+                    underPath.toStdString(), under)) {
+                return fail(QStringLiteral("下界配置保存失败"));
+            }
+            const auto clampedUnder =
+                w10de::ipc::InputSettings::load(underPath.toStdString());
+            if (clampedUnder.pointerSpeed != -1.0) {
+                return fail(QStringLiteral("speed 下界未钳制"));
+            }
+        }
+        // 审查 M/L：非数字与 NaN 应回退 0.0（NaN 比较恒 false 会穿透钳制）。
+        {
+            const QString nanPath = baseDir + QStringLiteral("/nan.ini");
+            {
+                QFile f(nanPath);
+                if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                    return fail(QStringLiteral("写 NaN 配置失败"));
+                }
+                QTextStream ts(&f);
+                ts << "[input]\npointer_speed = nan\n";
+            }
+            const auto nanLoaded =
+                w10de::ipc::InputSettings::load(nanPath.toStdString());
+            if (nanLoaded.pointerSpeed != 0.0 ||
+                    !std::isfinite(nanLoaded.pointerSpeed)) {
+                return fail(QStringLiteral("NaN 未回退 0.0"));
+            }
+            const QString junkPath = baseDir + QStringLiteral("/junk.ini");
+            {
+                QFile f(junkPath);
+                if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                    return fail(QStringLiteral("写垃圾配置失败"));
+                }
+                QTextStream ts(&f);
+                ts << "[input]\npointer_speed = abc\n";
+            }
+            const auto junkLoaded =
+                w10de::ipc::InputSettings::load(junkPath.toStdString());
+            if (junkLoaded.pointerSpeed != 0.0) {
+                return fail(QStringLiteral("非数字未回退 0.0"));
+            }
+        }
+    }
+    out << "OK input-settings\n";
     out << "SELFTEST PASS\n";
     return 0;
 }

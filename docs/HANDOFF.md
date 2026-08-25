@@ -198,6 +198,9 @@ README.md                           # 状态、构建、冒烟验证、待验证
 DEPENDENCIES-LICENSES.md             # 上游依赖许可证清单（合规核实，10 项基础清单）
 docs/ARCHITECTURE.md                # 架构设计文档（决策表/里程碑/风险）
 docs/HANDOFF.md                     # 本文档
+docs/KDE-GAP.md                     # KDE 差距分析（按类别/优先级）
+docs/UNFIXED.md                     # 未修复项清单（功能剩余 + 已知简化 + 待验证）
+docs/SYSTEMAPPS.md                  # 系统应用通用接口约定
 .gitignore
 
 src/compositor/
@@ -213,12 +216,13 @@ src/compositor/
   shadow.{h,cpp}                    # M8：窗口阴影渐变 buffer（自绘）
   util.h                            # W10DE_CONTAINER_OF 宏 + themeColorToFloat
   main.cpp                          # 参数解析（--width/--frames/--workspace/--switch-ws/--snap-test 等）
-  CMakeLists.txt                    # WLR_USE_UNSTABLE、PkgConfig::WLROOTS/DRM/XKBCOMMON/WAYLAND_SERVER/CAIRO/PANGO
+  CMakeLists.txt                    # WLR_USE_UNSTABLE、PkgConfig::WLROOTS/DRM/XKBCOMMON/WAYLAND_SERVER/CAIRO/PANGO/LIBINPUT
 
 src/ipc/
   config.{h,cpp}                    # 无依赖 INI 解析器（compositor/shell 共用）
   theme.{h,cpp}                     # 主题定义（Theme 结构/深浅预设/loadTheme/parseColor，纯 C++）
   shortcuts.{h,cpp}                 # 快捷键配置（[shortcuts] 段解析/默认绑定，第二批）
+  inputsettings.{h,cpp}             # 输入设备设置（[input] 段读写，中优先 #1）
 
 src/shell/
   main.cpp                          # 入口：layer-shell 配置（桌面/任务栏/开始菜单）+ --wallpaper + 主题加载
@@ -274,6 +278,14 @@ src/systemapps/
     main.cpp                        # 入口：单实例 + --selftest（pty 回读 + ANSI 提取单测）
     terminalpty.{h,cpp}             # PTY 封装（forkpty + 非阻塞 master + QSocketNotifier）
     termwindow.{h,cpp}              # 主窗口（TerminalEdit：ANSI 解析 + 按键转发）
+  viewer/                           # w10viewer 文本/PDF/图像查看器（中优先 #2）
+    main.cpp                        # 入口：单实例 + 文件参数（-- 分隔符）+ --selftest
+    viewerwindow.{h,cpp}            # 主窗口（三内容页：文本/图像/PDF + 缩放/翻页/适配）
+    filetype.{h,cpp}                # 文件类型探测（扩展名白名单 + 内容嗅探）
+  trash/                            # w10trash 回收站窗口（中优先 #3）
+    main.cpp                        # 入口：单实例 + --selftest（列表/恢复/冲突/清空）
+    trashwindow.{h,cpp}             # 主窗口（三列列表 + 恢复/彻底删除/清空 + 空态）
+    trashstore.{h,cpp}              # 回收站数据层（freedesktop Trash spec）
   CMakeLists.txt                    # systemapps_appipc 静态库 + 各应用 + .desktop 生成
 
 third_party/
@@ -400,6 +412,51 @@ WLR_BACKEND=wayland ./build/src/compositor/w10compositor --frames 0
 - **先读**：本文档 → `docs/ARCHITECTURE.md` → `README.md` → 相关源码，再改代码。
 - **KDE 差距分析**：`docs/KDE-GAP.md`（2026-08 生成）——按类别/优先级列出未实现功能
   （高优先：软件中心、进程管理器、Snap 布局选择器、锁屏密码 PAM、文件索引搜索），
-  后续功能补全立项以此为基准。
+  后续功能补全立项以此为基准。**KDE-GAP 高优先 #1 软件中心 ✅**（`src/systemapps/software/`：
+  .desktop 扫描 + 网格/搜索/详情/启动 + Flatpak 识别与卸载；selftest + 渲染 PASS；
+  审查 M1-M6/轻微项全修复：NoDisplay 过滤、用户级 Flatpak 目录、异步卸载、深色主题）
+  → **#2 进程管理器 ✅**（监视器"进程"页：/proc 列表 + CPU%/内存 + 结束进程；
+  审查 **S1 严重 stat 字段索引修复**（11/12/21）+ M1-M3/轻微修复；selftest + 渲染 PASS）
+  → **#3 Snap 布局选择器 ✅**（Win+Z 3×3 网格 + 方向键/Enter/Esc + View::snapToRect；
+  `--snaplayout-test` headless 渲染 PASS；审查 S1-S3/M3-M5 全修复）
+  → **#4 锁屏密码验证 ✅**（w10lock 接入 PAM（libpam，"login"）+ xkbcommon keysym：
+  密码输入/回车验证/失败重试（0.5s 延迟）/密码擦除；**fail-closed**——非 root
+  时 PAM 不可用则提示且不提供任意键解锁（真机建议 setuid root 安装 w10lock，
+  或用 /etc/pam.d/w10lock 专用服务）；PAM 实测 Denied + 锁屏渲染 PASS；
+  审查 S1-S2/M1-M4 全修复）
+  → **#5 文件索引搜索 ✅**（`src/shell/ipc/fileindex.{h,cpp}`：后台 QThread 索引
+  （隐藏/噪声排除、5 万上限）+ 名称/内容搜索；startmenu 搜索框改查索引 +
+  "正在索引"提示；单测 7/7 + 冒烟 PASS；**审查 S1-S2/M1-M4/L 系全修复**
+  （析构中断检查、内容索引三重闸门、Unicode 分词中文可搜、多词交集、
+  防抖 150ms、文件名显示））
+  → **高优先 5 项全部完成** → **中优先 #1 输入设备设置 ✅**
+  （`src/ipc/inputsettings.{h,cpp}`：[input] 段（pointer_speed/natural_scroll/
+  left_handed/tap_to_click/repeat_rate/repeat_delay），compositor 与
+  w10settings 共享；`Seat::applyInputSettings` 键盘重复率 + libinput 指针
+  配置（accel/natural/left-handed/tap；`wlr_input_device_is_libinput` +
+  `wlr_libinput_get_device_handle`——0.19 无 get_libinput_device）；
+  D-Bus Get/SetInputSettings（d:b:b:b:i:i + 越界校验）；w10settings
+  "输入设备"页 + 应用（config 保存 + D-Bus 热应用，降级提示）；
+  selftest input-settings 断言 + D-Bus 端到端 + `--page input` 渲染
+  PASS；**审查 S1/M 全修复**（S1 指针设备热拔插 UAF——PointerDevice
+  条目 + destroy 监听；M strtod NaN 穿透钳制——endptr/isfinite））
+  → **中优先 #2 文本/PDF/图像查看器 ✅**（`src/systemapps/viewer/`：
+  三合一——filetype 探测（扩展名 + 内容嗅探：PDF 魔数防伪装、无 NUL
+  UTF-8 兜底含 overlong/surrogate 约束）；文本 QPlainTextEdit（UTF-8/
+  UTF-16/UTF-32 BOM）、图像 QImageReader 缩放 clamp、PDF poppler-qt6
+  （上一页/下一页/缩放/适配 + 渲染尺寸 clamp 防 DoS）；appipc 单实例
+  + .desktop MimeType；selftest（探测/文本/图像/PDF 渲染）+ 三态渲染
+  PASS；**审查 M1-M5 全修复**（坏 PDF 不毁旧文档/PDF 渲染上限/图像
+  缩放上限/UTF-32 误判/%F→%f）+ L 系）→ **中优先 #3 回收站窗口 ✅**
+  （`src/systemapps/trash/`：freedesktop Trash spec 数据层 trashstore
+  （list/restore/permanentDelete/empty + 孤儿 info 清理）+ 三列窗口
+  trashwindow（恢复/彻底删除/清空/空态/双击恢复）+ appipc 单实例 +
+  .desktop；与 w10explorer moveToTrash 互操作；selftest 6 组（含
+  symlink-safe/relative-path-reject）+ 渲染两态 PASS；**审查 S1-S2/
+  M1-M7 全修复**：S1-1 symlink 递归删除目标内容（isSymLink 优先）、
+  S1-2 恢复路径 cleanPath+isAbsolute 校验、M1 孤儿 info 误删、M2
+  路径穿越、M3 排序、M4 消息覆盖、M5 无 D-Bus 降级、M6 selftest
+  回归、M7 moveToTrash 先 info 后文件回滚）→ 中优先剩余：每应用
+  音量、多显示器图形排列 GUI、窗口规则、桌面小部件。
 - **不要**重新核对已确认的 API（见第 4 节决策表与源码注释中的"已确认"标注）；新增 wlr_* 调用时对照 `third_party/wlroots/include/`。
 - **维护规则（用户明确要求）**：**每次完成任务/里程碑时，更新 `README.md` 的同时必须同步更新本文档**（状态表、文件清单、决策、已知问题、下一步）。本文档不是一次性的——它随项目演进持续维护，任何"进行中"状态必须在每次交接时准确反映。若 README 有变更而本文档未同步，视为交接不完整。

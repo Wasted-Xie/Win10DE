@@ -4,13 +4,19 @@
 
 #include <QGridLayout>
 #include <QHBoxLayout>
+#include <QHeaderView>
 #include <QLabel>
+#include <QMessageBox>
 #include <QPainter>
 #include <QProgressBar>
+#include <QPushButton>
+#include <QTabWidget>
+#include <QTableWidget>
 #include <QTimer>
 #include <QVBoxLayout>
 
 #include <cmath>
+#include <unistd.h>  // getpid（自杀保护）
 
 #include "systemapps/monitor/sysinfo.h"
 
@@ -101,24 +107,32 @@ void MonitorWindow::buildUi() {
     root->setContentsMargins(12, 12, 12, 12);
     root->setSpacing(10);
 
-    // CPU 曲线。
-    cpuGraph_ = new GraphWidget(central);
-    cpuGraph_->setCaption(QStringLiteral("CPU 使用率"));
-    root->addWidget(cpuGraph_, 1);
+    tabs_ = new QTabWidget(central);
+    root->addWidget(tabs_);
 
-    cpuSummary_ = new QLabel(central);
+    // ---- 性能页（原有内容）----
+    auto* perfPage = new QWidget(tabs_);
+    auto* perfLay = new QVBoxLayout(perfPage);
+    perfLay->setContentsMargins(8, 8, 8, 8);
+    perfLay->setSpacing(10);
+
+    cpuGraph_ = new GraphWidget(perfPage);
+    cpuGraph_->setCaption(QStringLiteral("CPU 使用率"));
+    perfLay->addWidget(cpuGraph_, 1);
+
+    cpuSummary_ = new QLabel(perfPage);
     cpuSummary_->setStyleSheet("color:#E0E0E0;");
-    root->addWidget(cpuSummary_);
+    perfLay->addWidget(cpuSummary_);
 
     // 每核进度条网格。
     auto* coreGrid = new QGridLayout;
     coreGrid->setSpacing(6);
     const int cores = sys_->coreCount();
-    perCoreCount_ = cores > kMaxCores ? kMaxCores : cores;
+    perCoreCount_ = cores > 32 ? 32 : cores;
     for (int i = 0; i < perCoreCount_; ++i) {
-        perCoreLabels_[i] = new QLabel(QStringLiteral("CPU%1").arg(i), central);
+        perCoreLabels_[i] = new QLabel(QStringLiteral("CPU%1").arg(i), perfPage);
         perCoreLabels_[i]->setStyleSheet("color:#C0C0C0;");
-        perCoreBars_[i] = new QProgressBar(central);
+        perCoreBars_[i] = new QProgressBar(perfPage);
         perCoreBars_[i]->setRange(0, 100);
         perCoreBars_[i]->setTextVisible(false);
         perCoreBars_[i]->setFixedHeight(10);
@@ -128,13 +142,13 @@ void MonitorWindow::buildUi() {
         coreGrid->addWidget(perCoreLabels_[i], i / 4, (i % 4) * 2);
         coreGrid->addWidget(perCoreBars_[i], i / 4, (i % 4) * 2 + 1);
     }
-    root->addLayout(coreGrid);
+    perfLay->addLayout(coreGrid);
 
     // 内存。
     auto* memRow = new QHBoxLayout;
-    memLabel_ = new QLabel(central);
+    memLabel_ = new QLabel(perfPage);
     memLabel_->setStyleSheet("color:#E0E0E0;");
-    memBar_ = new QProgressBar(central);
+    memBar_ = new QProgressBar(perfPage);
     memBar_->setRange(0, 100);
     memBar_->setFixedHeight(14);
     memBar_->setStyleSheet(
@@ -142,12 +156,39 @@ void MonitorWindow::buildUi() {
         "QProgressBar::chunk { background:#0078D7; }");
     memRow->addWidget(memLabel_, 0);
     memRow->addWidget(memBar_, 1);
-    root->addLayout(memRow);
+    perfLay->addLayout(memRow);
 
     // 磁盘/网络。
-    diskNetLabel_ = new QLabel(central);
+    diskNetLabel_ = new QLabel(perfPage);
     diskNetLabel_->setStyleSheet("color:#C0C0C0;");
-    root->addWidget(diskNetLabel_);
+    perfLay->addWidget(diskNetLabel_);
+    tabs_->addTab(perfPage, QStringLiteral("性能"));
+
+    // ---- 进程页（KDE-GAP #2）----
+    auto* procPage = new QWidget(tabs_);
+    auto* procLay = new QVBoxLayout(procPage);
+    procLay->setContentsMargins(8, 8, 8, 8);
+    procLay->setSpacing(8);
+
+    procTable_ = new QTableWidget(procPage);
+    procTable_->setColumnCount(4);
+    procTable_->setHorizontalHeaderLabels(
+        {QStringLiteral("PID"), QStringLiteral("名称"), QStringLiteral("CPU%"),
+         QStringLiteral("内存")});
+    procTable_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    procTable_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+    procTable_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    procTable_->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
+    procTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    procTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    procTable_->setSelectionMode(QAbstractItemView::SingleSelection);
+    procTable_->setAlternatingRowColors(true);
+    procLay->addWidget(procTable_, 1);
+
+    auto* killBtn = new QPushButton(QStringLiteral("结束进程"), procPage);
+    connect(killBtn, &QPushButton::clicked, this, &MonitorWindow::killSelected);
+    procLay->addWidget(killBtn, 0, Qt::AlignLeft);
+    tabs_->addTab(procPage, QStringLiteral("进程"));
 
     setCentralWidget(central);
 }
@@ -172,7 +213,7 @@ void MonitorWindow::refresh() {
     // 每核。
     const auto& perCore = sys_->cpuPerCore();
     for (int i = 0; i < perCoreCount_; ++i) {
-        const double v = i < perCore.size() ? perCore[static_cast<size_t>(i)] : 0.0;
+        const double v = i < static_cast<int>(perCore.size()) ? perCore[static_cast<size_t>(i)] : 0.0;
         perCoreBars_[i]->setValue(static_cast<int>(std::lround(v)));
         perCoreLabels_[i]->setText(
             QStringLiteral("CPU%1 %2%").arg(i).arg(static_cast<int>(std::lround(v))));
@@ -202,6 +243,68 @@ void MonitorWindow::refresh() {
                  QString::fromStdString(sys_->netInterface()),
                  QString::number(sys_->netRxKBps(), 'f', 1),
                  QString::number(sys_->netTxKBps(), 'f', 1)));
+
+    refreshProcesses();
+}
+
+void MonitorWindow::refreshProcesses() {
+    const auto procs = sys_->processList();
+    // 限制显示行数（避免超大列表卡 UI；保留前 200 个按 CPU 排序的）。
+    // 审查 L1：直接一次 setRowCount（原实现先设全量再截断，多建 N 行）。
+    const int rows = static_cast<int>(procs.size()) > 200
+        ? 200 : static_cast<int>(procs.size());
+    procTable_->setRowCount(rows);
+    for (int i = 0; i < rows; ++i) {
+        const ProcInfo& p = procs[static_cast<size_t>(i)];
+        procTable_->setItem(i, 0, new QTableWidgetItem(QString::number(p.pid)));
+        procTable_->setItem(i, 1, new QTableWidgetItem(
+            QString::fromStdString(p.cmdline.length() > 60
+                ? p.cmdline.substr(0, 60) + "…" : p.cmdline)));
+        procTable_->setItem(i, 2, new QTableWidgetItem(
+            QString::number(p.cpuPercent, 'f', 1)));
+        procTable_->setItem(i, 3, new QTableWidgetItem(
+            QStringLiteral("%1 MB").arg(p.rssKB / 1024.0, 0, 'f', 1)));
+    }
+}
+
+void MonitorWindow::killSelected() {
+    const int row = procTable_->currentRow();
+    if (row < 0) {
+        return;
+    }
+    const int pid = procTable_->item(row, 0)->text().toInt();
+    const QString name = procTable_->item(row, 1)->text();
+    // 审查 L5：防止结束自身（自杀）。
+    if (pid == static_cast<int>(::getpid())) {
+        QMessageBox::information(this, QStringLiteral("结束进程"),
+                                 QStringLiteral("不能结束监视器自身。"));
+        return;
+    }
+    // 审查 M3：提供"强制结束"（SIGKILL）选项。
+    const auto reply = QMessageBox::question(
+        this, QStringLiteral("结束进程"),
+        QStringLiteral("结束进程 %1（PID %2）？\n"
+                       "（选择“取消”关闭；如需强制请选“强制结束”）")
+            .arg(name).arg(pid),
+        QMessageBox::Yes | QMessageBox::No | QMessageBox::YesToAll,
+        QMessageBox::No);
+    bool force = false;
+    if (reply == QMessageBox::YesToAll) {
+        force = true;
+    } else if (reply != QMessageBox::Yes) {
+        return;
+    }
+    // 审查 L5：文案区分"信号已发送"与"发送失败"（SIGTERM 送达≠进程退出）。
+    if (SysInfo::killProcess(pid, force)) {
+        QMessageBox::information(this, QStringLiteral("结束进程"),
+                                 QStringLiteral("已发送%1。进程可能稍后退出。")
+                                     .arg(force ? QStringLiteral("强制结束信号")
+                                                : QStringLiteral("结束信号")));
+    } else {
+        QMessageBox::warning(this, QStringLiteral("结束进程"),
+                             QStringLiteral("发送信号失败（权限不足或进程已退出）。"));
+    }
+    refreshProcesses();
 }
 
 }  // namespace w10de::monitor

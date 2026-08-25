@@ -25,6 +25,10 @@ class FlowLayout;
 
 namespace w10de {
 
+namespace ipc {
+class FileIndex;  // KDE-GAP #5：文件索引（前向声明）
+}
+
 class StartMenu : public QWidget {
     Q_OBJECT
 public:
@@ -67,6 +71,9 @@ private:
     QList<AppEntry> appEntries_;         // 扫描缓存（搜索过滤用）
     bool sidebarExpanded_ = false;
     bool searchActive_ = false;          // 搜索模式（结果列表替代默认视图）
+    // KDE-GAP #5：文件索引搜索（后台索引，替代实时 QDirIterator）。
+    ipc::FileIndex* fileIndex_ = nullptr;
+    class QTimer* searchDebounce_ = nullptr;  // 搜索防抖（审查 M4）
 
     static constexpr int kSidebarWidth = 48;             // 折叠：与开始按钮等宽
     static constexpr int kSidebarExpandedWidth = 200;    // 展开：显示文字标签

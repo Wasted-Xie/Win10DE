@@ -171,19 +171,35 @@ bool FileOps::moveToTrash(const QString& path) {
     }
     const QString name = uniqueTrashName(filesDir, info.fileName());
     const QString dstFile = filesDir + QLatin1Char('/') + name;
-    if (!QFile::rename(path, dstFile)) {
-        return false;  // 跨设备等场景：不上报成功
+    // 审查 M-7（w10trash 互操作）：先落 info 再移文件——原实现先移文件
+    // 后写 info，info 写失败时返回 false 但文件已入回收站且无 info
+    // （不可恢复）。info 先写 .tmp，rename 原子落位，失败回滚。
+    const QString infoFile = infoDir + QLatin1Char('/') + name
+                             + QStringLiteral(".trashinfo");
+    const QByteArray enc = QUrl::toPercentEncoding(info.absoluteFilePath());
+    const QString tmpInfo = infoFile + QStringLiteral(".tmp");
+    {
+        QFile f(tmpInfo);
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            return false;  // 未动原文件，安全失败
+        }
+        f.write("[Trash Info]\n");
+        f.write("Path=" + enc + "\n");
+        f.write("DeletionDate="
+                + QDateTime::currentDateTime().toString(Qt::ISODate).toUtf8()
+                + "\n");
+        f.close();
     }
-    // info/<name>.trashinfo：Path（百分号编码的绝对路径）+ DeletionDate。
-    QFile f(infoDir + QLatin1Char('/') + name + QStringLiteral(".trashinfo"));
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+    if (!QFile::rename(path, dstFile)) {
+        QFile::remove(tmpInfo);  // 跨设备等场景：不上报成功
         return false;
     }
-    const QByteArray enc = QUrl::toPercentEncoding(info.absoluteFilePath());
-    f.write("[Trash Info]\n");
-    f.write("Path=" + enc + "\n");
-    f.write("DeletionDate=" + QDateTime::currentDateTime().toString(Qt::ISODate).toUtf8() + "\n");
-    f.close();
+    if (!QFile::rename(tmpInfo, infoFile)) {
+        // 极端（info 落位失败）：回滚文件移动，保持原状。
+        QFile::rename(dstFile, path);
+        QFile::remove(tmpInfo);
+        return false;
+    }
     return true;
 }
 

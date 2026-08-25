@@ -8,6 +8,12 @@
 #include <fstream>
 #include <sstream>
 
+#include <algorithm>
+#include <csignal>
+#include <dirent.h>
+#include <iterator>
+#include <unistd.h>
+
 namespace w10de::monitor {
 
 namespace {
@@ -351,6 +357,152 @@ void SysInfo::sample() {
     prevNet_ = net;
     prevDisk_ = disk;
     first_ = false;
+}
+
+// ---- 进程管理（KDE-GAP 高优先 #2）----
+
+namespace {
+
+// 解析 /proc/<pid>/stat：返回 name（comm）与 utime+stime ticks。
+// comm 可能含空格/括号，从第一个 '(' 到最后一个 ')' 截取。
+bool readProcStat(int pid, std::string* name, unsigned long long* cpuTicks,
+                  unsigned long long* rssBytes) {
+    std::ifstream f("/proc/" + std::to_string(pid) + "/stat");
+    if (!f) {
+        return false;
+    }
+    std::string line;
+    std::getline(f, line);
+    f.close();
+    const size_t open = line.find('(');
+    const size_t close = line.rfind(')');
+    if (open == std::string::npos || close == std::string::npos || close <= open) {
+        return false;
+    }
+    if (name != nullptr) {
+        *name = line.substr(open + 1, close - open - 1);
+    }
+    // 括号后字段：state(0) ppid(1) ... utime(11) stime(12) ... rss(21)
+    // （原字段 3 起为括号后索引 0：utime 原 14→11、stime 原 15→12、
+    // rss 原 24→21。审查 S1：原实现用 13/14/23 取到 cutime/cstime/
+    // startcode——CPU% 恒近 0、内存显示地址值）。
+    std::istringstream iss(line.substr(close + 1));
+    std::vector<std::string> fields;
+    std::string tok;
+    while (iss >> tok) {
+        fields.push_back(tok);
+    }
+    if (fields.size() < 22) {
+        return false;
+    }
+    if (cpuTicks != nullptr) {
+        // 审查 L2：rss 内核侧为 long，极端换出可为负——strtoll 并钳制。
+        const long long utime = std::strtoll(fields[11].c_str(), nullptr, 10);
+        const long long stime = std::strtoll(fields[12].c_str(), nullptr, 10);
+        *cpuTicks = utime > 0 ? static_cast<unsigned long long>(utime) : 0;
+        *cpuTicks += stime > 0 ? static_cast<unsigned long long>(stime) : 0;
+    }
+    if (rssBytes != nullptr) {
+        const long long pages = std::strtoll(fields[21].c_str(), nullptr, 10);
+        const unsigned long long p = pages > 0 ? static_cast<unsigned long long>(pages) : 0;
+        *rssBytes = p * static_cast<unsigned long long>(sysconf(_SC_PAGESIZE));
+    }
+    return true;
+}
+
+std::string readCmdline(int pid) {
+    std::ifstream f("/proc/" + std::to_string(pid) + "/cmdline",
+                    std::ios::binary);
+    if (!f) {
+        return std::string();
+    }
+    std::string data((std::istreambuf_iterator<char>(f)),
+                     std::istreambuf_iterator<char>());
+    // NUL 分隔 → 空格连接。
+    for (char& ch : data) {
+        if (ch == '\0') {
+            ch = ' ';
+        }
+    }
+    while (!data.empty() && data.back() == ' ') {
+        data.pop_back();
+    }
+    return data;
+}
+
+}  // namespace
+
+std::vector<ProcInfo> SysInfo::processList() {
+    std::vector<ProcInfo> out;
+
+    // 总 CPU ticks（相对进程% 基准：100 * dproc / dtotal * coreCount）。
+    const CpuCounters total = readCpuTotal();
+    const unsigned long long totalTicks = total.total();
+    const unsigned long long dTotal = totalTicks >= prevCpuTotalTicks_
+        ? totalTicks - prevCpuTotalTicks_ : 0;
+    prevCpuTotalTicks_ = totalTicks;
+
+    DIR* dir = opendir("/proc");
+    if (dir == nullptr) {
+        return out;
+    }
+    struct dirent* ent;
+    while ((ent = readdir(dir)) != nullptr) {
+        if (ent->d_name[0] < '0' || ent->d_name[0] > '9') {
+            continue;  // 仅数字目录（pid）
+        }
+        const int pid = std::atoi(ent->d_name);
+        ProcInfo info;
+        info.pid = pid;
+        unsigned long long cpuTicks = 0;
+        if (!readProcStat(pid, &info.name, &cpuTicks, &info.rssKB)) {
+            continue;  // 进程已退出或权限不足
+        }
+        info.rssKB /= 1024;
+        info.cmdline = readCmdline(pid);
+        if (info.cmdline.empty()) {
+            info.cmdline = info.name;  // 内核线程
+        }
+
+        // CPU%：相对单核（两次采样增量 / 总 CPU 增量 * 核心数）。
+        const auto prevIt = prevProcCpu_.find(pid);
+        if (prevIt != prevProcCpu_.end() && dTotal > 0 &&
+                cpuTicks >= prevIt->second) {
+            const unsigned long long dproc = cpuTicks - prevIt->second;
+            // 审查 L3：钳制（pid 复用/异常时 dproc 可能超 dTotal，防尖峰）。
+            const unsigned long long clamped =
+                dproc > dTotal ? dTotal : dproc;
+            info.cpuPercent = 100.0 * static_cast<double>(clamped) /
+                              static_cast<double>(dTotal) * coreCount_;
+        }
+        prevProcCpu_[pid] = cpuTicks;
+        out.push_back(std::move(info));
+    }
+    closedir(dir);
+
+    // 审查 M1：清理已退出进程的缓存（防止 map 随 pid 重用无限增长）。
+    for (auto it = prevProcCpu_.begin(); it != prevProcCpu_.end();) {
+        if (std::find_if(out.begin(), out.end(), [&](const ProcInfo& p) {
+                return p.pid == it->first;
+            }) == out.end()) {
+            it = prevProcCpu_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    // 按 CPU% 降序。
+    std::sort(out.begin(), out.end(), [](const ProcInfo& a, const ProcInfo& b) {
+        return a.cpuPercent > b.cpuPercent;
+    });
+    return out;
+}
+
+bool SysInfo::killProcess(int pid, bool force) {
+    if (pid <= 1) {
+        return false;  // 保护 init
+    }
+    return ::kill(pid, force ? SIGKILL : SIGTERM) == 0;
 }
 
 }  // namespace w10de::monitor

@@ -38,6 +38,7 @@ add_executable(w10shell
     startmenu/startmenu.cpp
     startmenu/tilebutton.cpp
     startmenu/flowlayout.cpp
+    ipc/fileindex.cpp
     tray/sniwatcher.cpp
     tray/trayicon.cpp
     tray/trayarea.cpp

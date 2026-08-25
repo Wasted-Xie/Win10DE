@@ -2,6 +2,9 @@
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(WAYLAND_CLIENT REQUIRED IMPORTED_TARGET wayland-client)
+pkg_check_modules(XKBCOMMON REQUIRED IMPORTED_TARGET xkbcommon)
+# libpam 无 pkg-config 文件（Arch pam 包）：find_library 查找。
+find_library(PAM_LIBRARY NAMES pam REQUIRED)
 find_program(WAYLAND_SCANNER wayland-scanner REQUIRED)
 
 # ---- wayland-scanner 生成 ext-session-lock 客户端代码 ----
@@ -21,6 +24,7 @@ add_custom_command(
 add_executable(w10lock
     main.cpp
     lockclient.cpp
+    pamcheck.cpp
     ${SESSION_LOCK_SRC}
     ${SESSION_LOCK_HDR}   # 生成头列入依赖，避免并行构建时序竞争
 )
@@ -34,4 +38,6 @@ target_link_libraries(w10lock PRIVATE
     Qt6::Gui
     Qt6::WaylandClient
     PkgConfig::WAYLAND_CLIENT
+    PkgConfig::XKBCOMMON
+    ${PAM_LIBRARY}
 )

@@ -17,6 +17,7 @@
 | 8 | **wayland-protocols** | 协议 XML | **MIT** | GitLab 克隆 `COPYING` |
 | 9 | **pixman**（wlroots 构建期） | 像素操作 | **MIT** | GitLab 克隆 `COPYING`（Open Group 等版权） |
 | 10 | **seatd**（wlroots 构建期） | seat 管理 | **MIT** | GitHub raw `LICENSE` |
+| 11 | **poppler / poppler-qt6 26.08** | w10viewer PDF 渲染（动态链接） | **多许可**：GPL-2/3、LGPL-2.0/2.1、MIT、HPND（Arch 打包声明） | `pacman -Qi poppler`；动态链接走 LGPL 分支，与 Qt 同款约束 |
 
 > 说明：9/10 为 wlroots 的 subproject 构建依赖（`third_party/wlroots/subprojects/*.wrap`），项目间接使用，MIT 无传染性。
 
@@ -28,6 +29,7 @@
 | stb（Public Domain） | 无任何义务 |
 | Qt 6（LGPL-3.0） | 动态链接即可；需允许用户替换 Qt 库、提供反向工程手段（默认满足）；**不要静态链接** |
 | layer-shell-qt（LGPL-2.1） | 同上，动态链接即可 |
+| poppler（LGPL-2.1-or-later 分支） | **动态链接即可**（w10viewer 通过 poppler-qt6 链接）；保持动态链接避免 GPL 传染 |
 
 **结论：只要保持 Qt / layer-shell-qt 动态链接，你的代码可选用任意开源协议。**
 

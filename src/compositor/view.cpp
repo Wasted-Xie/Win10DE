@@ -326,10 +326,11 @@ void View::snapTo(SnapEdge edge) {
 }
 
 void View::unsnap() {
-    if (snapEdge_ == SnapEdge::None) {
+    if (snapEdge_ == SnapEdge::None && !layoutSnapped_) {
         return;
     }
     snapEdge_ = SnapEdge::None;
+    layoutSnapped_ = false;
     // 恢复 snap 前几何（最大化状态下由 setMaximized(false) 处理）。
     if (hasRestoreGeometry_) {
         int rx = 0, ry = 0, rw = 0, rh = 0;
@@ -340,6 +341,36 @@ void View::unsnap() {
         hasRestoreGeometry_ = false;
     }
     wlr_log(WLR_INFO, "view unsnapped");
+}
+
+// ---- Snap 布局选择器（KDE-GAP #3：任意矩形区域）----
+
+void View::snapToRect(int x, int y, int w, int h) {
+    if (!mapped_) {
+        return;
+    }
+    // 同 snapTo：先取消最大化并保存恢复点（若尚无）。
+    if (maximized_) {
+        int rx = 0, ry = 0, rw = 0, rh = 0;
+        bool hadRestore = false;
+        if (hasRestoreGeometry_) {
+            restoreGeometry(&rx, &ry, &rw, &rh);
+            hadRestore = true;
+        }
+        setMaximized(false);
+        if (hadRestore) {
+            setRestoreGeometry(rx, ry, rw, rh);
+        }
+    }
+    if (!hasRestoreGeometry_) {
+        setRestoreGeometry(x_, y_, width(), height());
+    }
+    // 布局贴边：标记 layoutSnapped_（Win+↓ 可还原），不设 snapEdge_。
+    // 审查 L4：恢复点首次保存后不再覆盖（保持布局前的浮动几何）。
+    layoutSnapped_ = true;
+    animateMoveTo(x, y);
+    resize(w, h);
+    wlr_log(WLR_INFO, "view snapped to rect (%dx%d at %d,%d)", w, h, x, y);
 }
 
 void View::restoreGeometry(int* x, int* y, int* w, int* h) const {

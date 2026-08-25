@@ -1,12 +1,14 @@
 // w10lock —— 锁屏客户端（ext-session-lock-v1，M6）
 //
 // 绑定 session-lock 协议：创建全屏锁屏 surface，用 Qt 离屏渲染时钟画面
-// 并提交（wl_shm buffer），键盘任意键解锁（MVP 不验证密码，PAM 后续里程碑）。
+// 并提交（wl_shm buffer）。键盘事件经 xkbcommon 解析 keysym（KDE-GAP #4：
+// 密码输入需要区分字符/退格/回车）。
 #pragma once
 
 extern "C" {
 #include <wayland-client.h>
 #include "ext-session-lock-client-protocol.h"
+#include <xkbcommon/xkbcommon.h>
 }
 
 #include <functional>
@@ -34,8 +36,8 @@ public:
     // 把 ARGB32 帧提交到锁屏 surface（宽高须与 configure 一致）。
     void present(const void* argb, int width, int height);
 
-    // 键盘事件回调（任意键解锁判断用）。
-    void setKeyCallback(std::function<void()> onAnyKey);
+    // 键盘事件回调（KDE-GAP #4：keysym + 按下/释放；替代任意键回调）。
+    void setKeySymCallback(std::function<void(xkb_keysym_t sym, bool pressed)> cb);
 
     // 当前锁屏 surface 尺寸（configure 事件设置）。
     int width() const { return width_; }
@@ -90,10 +92,15 @@ private:
     size_t frameSize_ = 0;
     int bufferW_ = 0, bufferH_ = 0, stride_ = 0;
 
+    // xkbcommon（KDE-GAP #4：keysym 解析）。
+    xkb_context* xkbCtx_ = nullptr;
+    xkb_keymap* xkbKeymap_ = nullptr;
+    xkb_state* xkbState_ = nullptr;
+
     std::function<void()> onLocked_;
     std::function<void()> onConfigured_;
     std::function<void()> onFinished_;
-    std::function<void()> onAnyKey_;
+    std::function<void(xkb_keysym_t, bool)> onKeySym_;
     bool locked_ = false;
     int width_ = 0, height_ = 0;
 };

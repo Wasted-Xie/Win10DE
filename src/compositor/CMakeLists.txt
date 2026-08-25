@@ -14,8 +14,10 @@ add_executable(w10compositor
     titletext.cpp
     shadow.cpp
     alttab.cpp
+    snaplayout.cpp
     dbus_service.cpp
     ${CMAKE_SOURCE_DIR}/src/ipc/config.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/inputsettings.cpp
     ${CMAKE_SOURCE_DIR}/src/ipc/shortcuts.cpp
     ${CMAKE_SOURCE_DIR}/src/ipc/theme.cpp
 )
@@ -41,6 +43,8 @@ pkg_check_modules(CAIRO REQUIRED IMPORTED_TARGET cairo)
 pkg_check_modules(PANGO REQUIRED IMPORTED_TARGET pangocairo)
 # D-Bus 服务（org.w10de.Compositor：显示设置 IPC，第二批）。
 pkg_check_modules(DBUS REQUIRED IMPORTED_TARGET dbus-1)
+# 输入设备设置（libinput 指针配置：accel/natural/left-handed/tap）。
+pkg_check_modules(LIBINPUT REQUIRED IMPORTED_TARGET libinput)
 
 target_link_libraries(w10compositor PRIVATE
     ${WLROOTS_TARGET}
@@ -50,4 +54,5 @@ target_link_libraries(w10compositor PRIVATE
     PkgConfig::CAIRO
     PkgConfig::PANGO
     PkgConfig::DBUS
+    PkgConfig::LIBINPUT
 )

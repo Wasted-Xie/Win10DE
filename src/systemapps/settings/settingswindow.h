@@ -42,6 +42,9 @@ private:
     void buildDefaultsPage();
     void buildNetworkPage();
     void buildBluetoothPage();
+    // 输入设备页（第三批：鼠标/键盘/触摸板，[input] 配置 + D-Bus 热应用）
+    void buildInputPage();
+    void saveInputSettings();
     // 操作
     void saveTheme();
     void browseWallpaper();
@@ -118,6 +121,17 @@ private:
     QCheckBox* bluetoothSwitch_ = nullptr;
     QLabel* bluetoothStatus_ = nullptr;
     QLabel* bluetoothDevices_ = nullptr;
+    // 输入设备页控件（第三批：鼠标/键盘/触摸板）
+    QSlider* pointerSpeedSlider_ = nullptr;
+    QLabel* pointerSpeedValue_ = nullptr;
+    QCheckBox* naturalScrollCheck_ = nullptr;
+    QCheckBox* leftHandedCheck_ = nullptr;
+    QCheckBox* tapToClickCheck_ = nullptr;
+    QSlider* repeatRateSlider_ = nullptr;
+    QLabel* repeatRateValue_ = nullptr;
+    QSlider* repeatDelaySlider_ = nullptr;
+    QLabel* repeatDelayValue_ = nullptr;
+    QLabel* inputStatus_ = nullptr;
 };
 
 }  // namespace w10de::settings
