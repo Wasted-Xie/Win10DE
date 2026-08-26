@@ -36,7 +36,7 @@
 | M7 续 | **多工作区**（`View/XView::workspace_` 归属、`switchWorkspace`/`moveViewToWorkspace`、统一 `applyVisibility`、命中过滤）+ **XWayland SSD 装饰与任务栏集成**（XView 同款标题栏/按钮/文字/阴影 + foreign-toplevel handle + 拖动交互 + override-redirect 处理 + set_class→app_id） | ✅ 完成（多工作区 4 场景 headless 验证；XWayland 因 WSL 无 X11 仅静态审查+编译） |
 | M8 | 视觉打磨：窗口阴影（自绘 ARGB 渐变 buffer）、Aero Snap（Win+←/→ 半屏 / ↑ 最大化 / ↓ 还原 + 平滑动画）、窗口移动动画；圆角遵循 Win10 直角设计（UI 元素 Qt 侧 2px 圆角） | ✅ 完成（阴影/Snap headless 验证通过） |
 | 主题 | **主题功能 + 浅色模式 + 自定义通道**：`src/ipc/theme.{h,cpp}`（共享主题定义）—`[theme]` 段 `mode=dark/light` 预设 + 14 颜色键覆盖；compositor（标题栏/按钮/文字/背景）与 w10shell（任务栏/开始菜单/时钟）读同一配置 | ✅ 完成（深色回归/浅色/自定义三态验证通过） |
-| 系统应用 | **通用接口框架**（`docs/SYSTEMAPPS.md`：独立二进制 + D-Bus 单实例激活 `org.w10de.Apps.<Name>`/Activate(s path)，`src/systemapps/appipc.{h,cpp}` 供后续应用复用）+ **w10explorer 文件资源管理器**（文件操作对标 Windows）+ **w10settings 设置中心**（KDE 风格，主题/壁纸/关于/开机自启） | ✅ 完成（explorer selftest 8 项 + settings 配置读写 selftest + 双应用 headless 渲染 + 单实例 D-Bus 激活验证通过） |
+| 系统应用 | **通用接口框架**（`docs/SYSTEMAPPS.md`：独立二进制 + D-Bus 单实例激活 `org.w10de.Apps.<Name>`/Activate(s path)，`src/systemapps/appipc.{h,cpp}` 供后续应用复用）+ **w10explorer 文件资源管理器**（文件操作对标 Windows）+ **w10settings 设置中心**（KDE 风格，主题/壁纸/关于/开机自启）+ **w10control 控制面板**（WIN10-GAP G1：传统"按类别"视图 + 模态对话框，双入口共享后端） | ✅ 完成（explorer selftest 8 项 + settings 配置读写 selftest + 双应用 headless 渲染 + 单实例 D-Bus 激活验证通过；w10control 见 WIN10-GAP 1.1） |
 | 功能补全（goal cd47bf3e） | **第一批：Alt+Tab 切换器** ✅（`src/compositor/alttab.{h,cpp}`：scene 层 UI、候选=当前工作区可见窗口（xdg+XView）、强调色高亮、Seat 集成 Alt+Tab/Shift+Tab/Alt 释放、`--alttab-test` 帧钩子 headless 验证 PASS）；**全局搜索** ✅（开始菜单顶部搜索框：应用过滤 + 主目录文件搜索（QDirIterator 数量上限）、混合结果、文件 systemd 默认打开、磁贴区隐藏、聚焦即输入；渲染验证 PASS）；**通知中心** ✅（`org.freedesktop.Notifications` 标准 D-Bus 服务 + 右下角弹窗 360×100（5 秒自动隐藏、点击打开历史）+ 通知历史中心 380×480（Esc 关闭）；gdbus 触发 + headless 渲染验证 PASS：card 6314/文字 1214 像素）；**剪贴板历史** ✅（Win+V 语义：`ClipboardHistory` 监听系统剪贴板（文本/图片、连续去重、上限 20）+ overlay 历史面板 360px（点击写回剪贴板、Esc 关闭、空态占位）+ Win+V 快捷键（compositor fork dbus-send → `org.w10de.Clipboard.ToggleClipboardHistory`）；`--clipboard-selftest` 逻辑自测 + 面板渲染验证 PASS：card 33831/文字 73）；**终端 w10term** ✅（`src/systemapps/term/`：forkpty + **非阻塞 master fd**（阻塞 fd 会卡死 Qt 事件循环——gdb attach 实测）+ QSocketNotifier 读 + ANSI 子集解析（SGR 16 色/清屏/退格；光标移动忽略）+ 按键转发 + Ctrl+Shift+C/V 本地复制粘贴 + appipc 单实例；`--selftest`（pty 回读 + ANSI 提取单测）+ 渲染 PASS：文字 1282/背景 34354 像素 + 单实例 D-Bus 激活 PASS）——**第一批 5 项全部完成**；**第二批：显示设置** ✅（`src/compositor/dbus_service.{h,cpp}`：org.w10de.Compositor/Outputs——GetOutputs/GetModes/SetMode/SetScale/SetPosition，libdbus 共享连接（只 unref 不 close）+ dbus fd 挂 wl_event_loop + wlroots 0.19 state API 热应用；w10settings"显示"模块：输出/分辨率/缩放下拉 + 应用/刷新 + `--page display`；IPC 热应用验证 PASS：SetScale 200→GetOutputs 960x540、SetMode 1280x720→640x360；显示页渲染 PASS）→ **快捷键配置化** ✅（`src/ipc/shortcuts.{h,cpp}`：[shortcuts] 配置段解析 "win+q"/"ctrl+alt+l"（修饰键 win/ctrl/shift/alt + 键名 a-z/0-9/方向/F 键等）+ 14 动作绑定（close/maximize/minimize/snap×4/lock/quit/clipboard/workspace_1-4；Alt+Tab 语义特殊保持固定）；processKey 查表分发——`(mods & 0x4F) == b.mods` 修饰组合精确匹配（支持 ctrl/alt/shift，原 pureLogo 特化为通用）；dispatchShortcut 动作实现与原硬编码一致；`--shortcuts-dump` 打印生效绑定）→ 电源/音频/默认应用；第三批生态 | 按 KDE 差距分析优先级推进 |
 
 **验证状态**：多轮子代理静态审查全部完成（前 3 轮共 92 问题全部修复或标注；M2b/M7续/M8 又 3 轮审查并修复，见 README「M2b / M7 续 / M8 开发与验证」节）。**2026-08 完成真实编译 + headless 冒烟 + 完整渲染验证**（WSL2 Arch：vendored wlroots 0.19 源码编译 + 各二进制构建成功；`--frames 5` 截图像素校验通过；compositor+w10shell 同跑验证桌面壁纸渐变 + 任务栏渲染成功）。**M2b/M7续/M8 专项验证**（2026-08）：标题栏白字/关闭钮像素、多工作区 4 场景、窄窗口文字清空、窗口阴影、Aero Snap 贴边全部 headless 截图/像素验证通过。XWayland 运行时验证待真机（WSL 无 X11）。
@@ -201,7 +201,7 @@ docs/HANDOFF.md                     # 本文档
 docs/KDE-GAP.md                     # KDE 差距分析（按类别/优先级）
 docs/UNFIXED.md                     # 未修复项清单（功能剩余 + 已知简化 + 待验证）
 docs/SYSTEMAPPS.md                  # 系统应用通用接口约定
-.gitignore
+docs/WIN10-GAP.md                   # 与 Windows 对照的系统应用差距清单（6 项已立项 + 未立项/不做）.gitignore
 
 src/compositor/
   server.{h,cpp}                    # Compositor：生命周期/协议/层锚/arrange/可用区/多工作区/动画 tick
@@ -270,10 +270,19 @@ src/systemapps/
     fileops.{h,cpp}                 # 文件操作（复制/剪切/粘贴/回收站/重命名/新建/大小）
   settings/                         # w10settings 设置中心（KDE System Settings 风格）
     main.cpp                        # 入口：单实例 + --selftest（配置/电源/音量/mimeapps headless 自测）+ --page
-    settingswindow.{h,cpp}          # 主窗口（搜索/左侧分类/右侧模块：外观/系统/**显示**/**电源**/**音频**/**默认应用**）
+    settingswindow.{h,cpp}          # 主窗口（搜索/左侧分类/右侧模块：外观/系统/**显示**/**电源**/**音频**/**默认应用**/**Night Light**/**快捷键**/**窗口规则**）
     powerinfo.{h,cpp}               # 电源信息（sysfs 电池/背光，第二批）
     audioinfo.{h,cpp}               # 音频控制（libpulse 客户端，第二批）
     defaultapps.{h,cpp}             # 默认应用（xdg mimeapps.list，第二批收官）
+    networkinfo.{h,cpp}             # 网络状态（NetworkManager D-Bus，第三批）
+    bluetoothinfo.{h,cpp}           # 蓝牙（Bluez D-Bus，第三批）
+  control/                          # w10control 控制面板（WIN10-GAP G1：传统按类别视图）
+    main.cpp                        # 入口：单实例 + --selftest（Config remove/规则往返/对话框构建）
+    controlwindow.{h,cpp}           # 主页：类别图标网格（自绘图标）+ 搜索过滤
+    categorydialogs.{h,cpp}         # 6 类别模态对话框 + 快捷键/窗口规则对话框（共享后端）
+  common/                           # 系统应用共享组件（G1）
+    monitorarrangement.{h,cpp}      # 显示器排列控件（settings/control 共用）
+    ruleeditdialog.{h,cpp}          # 窗口规则编辑对话框（settings/control 共用）
   term/                             # w10term 终端（第一批，2026-08）
     main.cpp                        # 入口：单实例 + --selftest（pty 回读 + ANSI 提取单测）
     terminalpty.{h,cpp}             # PTY 封装（forkpty + 非阻塞 master + QSocketNotifier）
@@ -286,6 +295,18 @@ src/systemapps/
     main.cpp                        # 入口：单实例 + --selftest（列表/恢复/冲突/清空）
     trashwindow.{h,cpp}             # 主窗口（三列列表 + 恢复/彻底删除/清空 + 空态）
     trashstore.{h,cpp}              # 回收站数据层（freedesktop Trash spec）
+  screenshot/                       # w10screenshot 截图工具（G2：区域/窗口/延时）
+    main.cpp                        # 入口：CLI（--fullscreen/--region/--window/--delay）+ 交互模式 + --selftest
+    capture.{h,cpp}                 # 捕获核心（wlr-screencopy 同步单次 + 区域裁剪）
+    screenshotwindow.{h,cpp}        # 交互遮罩窗口（工具条/拖选/倒计时/窗口选择）
+  devices/                          # w10devices 设备管理器（G3：硬件树 + 详情）
+    main.cpp                        # 入口：单实例 + --selftest（扫描健壮性 6 项）
+    devicemodel.{h,cpp}             # 硬件扫描（sysfs/proc：CPU/内存/磁盘/显卡/网络/USB/PCI/输入）
+    deviceswindow.{h,cpp}           # 主窗口（左树 8 类别 + 右属性表 + 图标）
+  tasks/                            # w10tasks 任务计划程序（G5：cron 等价）
+    main.cpp                        # 入口：GUI/--daemon 调度守护/--selftest（含 TaskDaemon）
+    taskstore.{h,cpp}               # 任务配置（tasks.ini）+ cron 风格调度匹配 + 触发器文本
+    taskwindow.{h,cpp}              # 主窗口（任务列表 + 新建/编辑对话框 + 立即运行）
   CMakeLists.txt                    # systemapps_appipc 静态库 + 各应用 + .desktop 生成
 
 third_party/
@@ -400,6 +421,7 @@ WLR_BACKEND=wayland ./build/src/compositor/w10compositor --frames 0
 4. **锁屏密码验证**（PAM）与电源菜单真实动作确认。
 5. **提交/推送**：当前第一批 5 项（Alt+Tab/全局搜索/通知中心/剪贴板历史/终端 w10term）+ 第二批 5 项（显示设置/快捷键/电源/音频/默认应用）+ 第三批前 2 项（截图工具/系统监视器）+ 主题/from-source/explorer 改动在本地（最近提交 `dafcd55`），需用户授权后 commit + push。
 6. **第二批（设置完备）**：显示设置 ✅、快捷键配置化 ✅、电源管理 ✅、音频控制 ✅、默认应用设置 ✅——**第二批 5 项全部完成**；**第三批（生态）5 项全部完成**：截图工具 ✅（wlr-screencopy v3 客户端；S1/M1/L1-L5 审查修复；纯壁纸+窗口验证）、系统监视器 ✅（/proc 数据源；审查 3 中等修复）、计算器 ✅（审查 M1-M3 修复；selftest 9 项）、壁纸幻灯片 ✅（slideshow_dir/interval；三连拍红→绿；**LayerShellQt paint 失效→hide/show**；审查 S1 优先级/M2/L 系修复）、网络/蓝牙 ✅（settings 网络+蓝牙模块：NetworkManager/Bluez D-Bus；**子代理审查 S1/S2 严重问题修复**：GetManagedObjects a{oa{sa{sv}}} 类型化注册（QMap<QDBusObjectPath,QMap<QString,QVariantMap>> + qDBusRegisterMetaType）、AddressData aa{sv} 双形态解组（QDBusArgument / QVariantList 兼容）、连接路径精确匹配（M1）、toggle 失败提示时序（M2）、errorText 透传（M3）；**D-Bus mock 端到端验证 PASS**：Qt 在 system bus 注册假服务，NET 连接+IP、BT 适配器+设备解析全过——测试工具 /tmp/w10de-dbtest.cpp（WSL 临时，不入库）；服务缺失降级渲染 PASS；setPowered 的 Properties.Set 签名已审查、mock 未覆盖，真机需验证）。
+7. **WIN10-GAP 系统应用补全（goal 68bb4720）**：G1 控制面板 ✅（`w10control` 传统按类别视图 + 模态对话框；`w10settings` 补全 Night Light/快捷键/窗口规则 3 页；双入口共享 config.ini + org.w10de.Compositor D-Bus 覆盖全部功能；compositor 新增 `SetNightLight(b,i,i,i)` 热应用；共享组件 common/monitorarrangement + common/ruleeditdialog；Config 新增 remove/sectionKeys；WindowRule.name；双应用 selftest PASS（含规则序列化往返）+ headless 渲染 4/4 + SetNightLight D-Bus 端到端 PASS；子代理审查 S 级修复）→ **G2 截图工具补全 ✅**（`w10screenshot` 升级 Qt：交互模式遮罩/区域拖选/窗口选择/延时 + CLI --fullscreen/--region/--window/--delay；compositor 新增 GetViews D-Bus；capture.{h,cpp} 核心提取；--output 精确匹配修复（两次 roundtrip）；compositor fullscreen 未初始化断言修复（pendingFullscreen_）；selftest 3 项 + headless 捕获 4/4 + 交互遮罩渲染 PASS；审查修复见 WIN10-GAP 1.2）→ **G3 设备管理器 ✅**（`w10devices`：左硬件树 8 类别 + 右属性表；sysfs/proc 数据源；key 字段定位重名设备；虚拟盘过滤；ARM CPU fallback；selftest 6 项 + 渲染 PASS；审查 M1/M2/M3/M5 全修复，见 WIN10-GAP 1.3）→ **G4 性能监视器补全 ✅**（`w10monitor` 性能页 4 图（CPU/内存/磁盘读写双序列/网络收发双序列，60 点滚动）；磁盘/网络累计总量详情；进程页 6 列加每进程 IO（/proc/pid/io 增量）；selftest 扩展 PASS（24 核）+ 渲染 PASS；已知简化：每进程网络明细未做（需 eBPF），见 WIN10-GAP 1.4）→ **G5 任务计划程序 ✅**（`w10tasks`：GUI（新建/编辑/删除/启停/立即运行，触发器模板）+ `--daemon` 调度守护（cron 风格每分钟匹配执行 + last_run 写回）；配置 tasks.ini；D-Bus Reload；selftest 3 项 + 守护端到端 PASS（65s）+ Reload method return + 渲染 PASS，见 WIN10-GAP 1.5）→ **G6 日历 ✅**（任务栏时钟点击弹出月历：标题翻月/周一起始 6×7 网格/今天蓝圆高亮/悬停/底部今天行；Qt::Popup 外部点击关闭；calendarCells/daysInMonth 纯逻辑；--calendar-selftest PASS + --calendar-render 渲染 PASS（今天蓝圆 3444）+ w10shell 回归无破坏，见 WIN10-GAP 1.6）——**WIN10-GAP 6 项全部 ✅ 完成**。下一步：待用户授权提交全部变更（G1-G6 + 此前 UNFIXED 修正）。功能矩阵与验证记录见 `docs/WIN10-GAP.md` 1.1-1.6。
 
 ---
 

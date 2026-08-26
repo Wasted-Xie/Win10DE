@@ -29,12 +29,34 @@ constexpr int kMaxCores = 32;
 // ---- GraphWidget ----
 
 GraphWidget::GraphWidget(QWidget* parent) : QWidget(parent) {
-    setMinimumHeight(160);
+    setMinimumHeight(120);
 }
 
 void GraphWidget::setHistory(const QVector<double>& data, double maxValue) {
     data_ = data;
+    dataB_.clear();
+    dual_ = false;
     maxValue_ = maxValue > 0 ? maxValue : 100.0;
+    update();
+}
+
+void GraphWidget::setDualHistory(const QVector<double>& dataA,
+                                 const QVector<double>& dataB,
+                                 double maxValue, const QColor& colorA,
+                                 const QColor& colorB, const QString& legendA,
+                                 const QString& legendB) {
+    data_ = dataA;
+    dataB_ = dataB;
+    dual_ = true;
+    // G4 审查 L4：y 轴上限 EMA 平滑（峰值不瞬间拉高压扁曲线、低谷不
+    // 立即贴底）——上升快（0.6 权重新峰值）、下降慢（0.85 保留旧值）。
+    const double target = maxValue > 0 ? maxValue : 100.0;
+    maxValue_ = qMax(1.0, qMax(lastMax_ * 0.85, target * 0.6));
+    lastMax_ = maxValue_;
+    colorA_ = colorA;
+    colorB_ = colorB;
+    legendA_ = legendA;
+    legendB_ = legendB;
     update();
 }
 
@@ -42,6 +64,32 @@ void GraphWidget::setCaption(const QString& caption) {
     caption_ = caption;
     update();
 }
+
+namespace {
+
+// 折线绘制（右对齐滚动；值钳制 [0, maxValue]）。
+void drawSeries(QPainter* p, const QVector<double>& data, double maxValue,
+                int w, int h, const QColor& color) {
+    const int n = data.size();
+    if (n < 2) {
+        return;
+    }
+    const double xStep = static_cast<double>(w)
+        / (static_cast<double>(w) > 0 ? (n > 1 ? n - 1 : 1) : 1);
+    QPolygonF poly;
+    for (int i = 0; i < n; ++i) {
+        const double v = data[i] < 0 ? 0
+            : (data[i] > maxValue ? maxValue : data[i]);
+        const double x = w - static_cast<double>(n - 1 - i) * xStep;
+        const double y = h - h * v / maxValue;
+        poly << QPointF(x, y);
+    }
+    p->setPen(QPen(color, 2));
+    p->setBrush(Qt::NoBrush);
+    p->drawPolyline(poly);
+}
+
+}  // namespace
 
 void GraphWidget::paintEvent(QPaintEvent*) {
     QPainter p(this);
@@ -58,20 +106,16 @@ void GraphWidget::paintEvent(QPaintEvent*) {
         p.drawLine(0, y, w, y);
     }
 
-    // 数据折线（右对齐滚动）。
-    const int n = data_.size();
-    if (n >= 2) {
-        const double xStep = static_cast<double>(w) / (SysInfo::kHistory - 1);
-        QPolygonF poly;
-        for (int i = 0; i < n; ++i) {
-            const double v = data_[i] < 0 ? 0 : (data_[i] > maxValue_ ? maxValue_ : data_[i]);
-            const double x = w - static_cast<double>(n - 1 - i) * xStep;
-            const double y = h - h * v / maxValue_;
-            poly << QPointF(x, y);
-        }
-        p.setPen(QPen(QColor(0x00, 0x78, 0xD7), 2));
-        p.setBrush(Qt::NoBrush);
-        p.drawPolyline(poly);
+    if (dual_) {
+        drawSeries(&p, data_, maxValue_, w, h, colorA_);
+        drawSeries(&p, dataB_, maxValue_, w, h, colorB_);
+        // 图例（右上）。
+        p.setPen(colorA_);
+        p.drawText(w - 200, 16, QStringLiteral("— %1").arg(legendA_));
+        p.setPen(colorB_);
+        p.drawText(w - 100, 16, QStringLiteral("— %1").arg(legendB_));
+    } else {
+        drawSeries(&p, data_, maxValue_, w, h, colorA_);
     }
 
     // 标题。
@@ -88,7 +132,7 @@ MonitorWindow::MonitorWindow(QWidget* parent) : QMainWindow(parent) {
     sys_->sample();  // 首次基准。
 
     setWindowTitle(QStringLiteral("任务管理器"));
-    resize(720, 560);
+    resize(900, 680);  // G4：4 图布局需更大窗口
     buildUi();
 
     timer_ = new QTimer(this);
@@ -110,15 +154,21 @@ void MonitorWindow::buildUi() {
     tabs_ = new QTabWidget(central);
     root->addWidget(tabs_);
 
-    // ---- 性能页（原有内容）----
+    // ---- 性能页（G4：CPU/内存/磁盘/网络 4 图）----
     auto* perfPage = new QWidget(tabs_);
     auto* perfLay = new QVBoxLayout(perfPage);
     perfLay->setContentsMargins(8, 8, 8, 8);
-    perfLay->setSpacing(10);
+    perfLay->setSpacing(8);
 
+    // 第一行：CPU + 内存曲线。
+    auto* row1 = new QHBoxLayout;
     cpuGraph_ = new GraphWidget(perfPage);
     cpuGraph_->setCaption(QStringLiteral("CPU 使用率"));
-    perfLay->addWidget(cpuGraph_, 1);
+    row1->addWidget(cpuGraph_, 1);
+    memGraph_ = new GraphWidget(perfPage);
+    memGraph_->setCaption(QStringLiteral("内存使用率"));
+    row1->addWidget(memGraph_, 1);
+    perfLay->addLayout(row1, 1);
 
     cpuSummary_ = new QLabel(perfPage);
     cpuSummary_->setStyleSheet("color:#E0E0E0;");
@@ -158,9 +208,20 @@ void MonitorWindow::buildUi() {
     memRow->addWidget(memBar_, 1);
     perfLay->addLayout(memRow);
 
-    // 磁盘/网络。
+    // 第二行：磁盘 + 网络曲线（G4 双序列）。
+    auto* row2 = new QHBoxLayout;
+    diskGraph_ = new GraphWidget(perfPage);
+    diskGraph_->setCaption(QStringLiteral("磁盘读写"));
+    row2->addWidget(diskGraph_, 1);
+    netGraph_ = new GraphWidget(perfPage);
+    netGraph_->setCaption(QStringLiteral("网络收发"));
+    row2->addWidget(netGraph_, 1);
+    perfLay->addLayout(row2, 1);
+
+    // 磁盘/网络详情（含 G4 累计总量）。
     diskNetLabel_ = new QLabel(perfPage);
     diskNetLabel_->setStyleSheet("color:#C0C0C0;");
+    diskNetLabel_->setWordWrap(true);
     perfLay->addWidget(diskNetLabel_);
     tabs_->addTab(perfPage, QStringLiteral("性能"));
 
@@ -171,14 +232,17 @@ void MonitorWindow::buildUi() {
     procLay->setSpacing(8);
 
     procTable_ = new QTableWidget(procPage);
-    procTable_->setColumnCount(4);
+    // G4：加每进程磁盘 IO 列（读/写 KB/s）。
+    procTable_->setColumnCount(6);
     procTable_->setHorizontalHeaderLabels(
         {QStringLiteral("PID"), QStringLiteral("名称"), QStringLiteral("CPU%"),
-         QStringLiteral("内存")});
+         QStringLiteral("内存"), QStringLiteral("IO 读"), QStringLiteral("IO 写")});
     procTable_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     procTable_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
     procTable_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
     procTable_->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
+    procTable_->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
+    procTable_->horizontalHeader()->setSectionResizeMode(5, QHeaderView::ResizeToContents);
     procTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     procTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
     procTable_->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -205,6 +269,48 @@ void MonitorWindow::refresh() {
     cpuGraph_->setCaption(
         QStringLiteral("CPU 使用率  %1%").arg(sys_->cpuTotal(), 0, 'f', 0));
 
+    // G4：内存曲线。
+    QVector<double> memHist;
+    for (double v : sys_->memHistory()) {
+        memHist.append(v);
+    }
+    const auto& m = sys_->mem();
+    memGraph_->setHistory(memHist, 100.0);
+    memGraph_->setCaption(
+        QStringLiteral("内存使用率  %1%").arg(m.usedPercent(), 0, 'f', 0));
+
+    // G4：磁盘曲线（双序列读/写 MB/s；max 自适应历史峰值）。
+    QVector<double> drHist, dwHist;
+    double diskMax = 1.0;
+    for (double v : sys_->diskReadHistory()) {
+        drHist.append(v);
+        diskMax = std::max(diskMax, v);
+    }
+    for (double v : sys_->diskWriteHistory()) {
+        dwHist.append(v);
+        diskMax = std::max(diskMax, v);
+    }
+    diskGraph_->setDualHistory(drHist, dwHist, diskMax * 1.3,
+                               QColor(0, 120, 215), QColor(16, 180, 110),
+                               QStringLiteral("读"), QStringLiteral("写"));
+    diskGraph_->setCaption(QStringLiteral("磁盘读写（MB/s）"));
+
+    // G4：网络曲线（双序列收/发 KB/s）。
+    QVector<double> nrHist, ntHist;
+    double netMax = 1.0;
+    for (double v : sys_->netRxHistory()) {
+        nrHist.append(v);
+        netMax = std::max(netMax, v);
+    }
+    for (double v : sys_->netTxHistory()) {
+        ntHist.append(v);
+        netMax = std::max(netMax, v);
+    }
+    netGraph_->setDualHistory(nrHist, ntHist, netMax * 1.3,
+                              QColor(0, 120, 215), QColor(16, 180, 110),
+                              QStringLiteral("收"), QStringLiteral("发"));
+    netGraph_->setCaption(QStringLiteral("网络收发（KB/s）"));
+
     cpuSummary_->setText(
         QStringLiteral("使用率 %1%    处理器: %2 个核心")
             .arg(sys_->cpuTotal(), 0, 'f', 0)
@@ -220,7 +326,6 @@ void MonitorWindow::refresh() {
     }
 
     // 内存。
-    const auto& m = sys_->mem();
     const double usedPct = m.usedPercent();
     memBar_->setValue(static_cast<int>(std::lround(usedPct)));
     const double totalGb = static_cast<double>(m.totalKb) / (1024.0 * 1024.0);
@@ -233,16 +338,31 @@ void MonitorWindow::refresh() {
             .arg(totalGb, 0, 'f', 1)
             .arg(m.swapUsedPercent(), 0, 'f', 0));
 
-    // 磁盘/网络。
+    // 磁盘/网络（G4：速率 + 累计总量）。
+    const auto humanBytes = [](unsigned long long bytes) {
+        if (bytes >= 1024ull * 1024 * 1024) {
+            return QStringLiteral("%1 GB").arg(
+                bytes / (1024.0 * 1024 * 1024), 0, 'f', 1);
+        }
+        if (bytes >= 1024ull * 1024) {
+            return QStringLiteral("%1 MB").arg(
+                bytes / (1024.0 * 1024), 0, 'f', 1);
+        }
+        return QStringLiteral("%1 KB").arg(bytes / 1024.0, 0, 'f', 1);
+    };
     diskNetLabel_->setText(
-        QStringLiteral("磁盘 %1：读 %2 MB/s  写 %3 MB/s      "
-                       "网络 %4：收 %5 KB/s  发 %6 KB/s")
+        QStringLiteral("磁盘 %1：读 %2 MB/s  写 %3 MB/s（累计读 %4 / 写 %5）\n"
+                       "网络 %6：收 %7 KB/s  发 %8 KB/s（累计收 %9 / 发 %10）")
             .arg(QString::fromStdString(sys_->diskDevice()),
                  QString::number(sys_->diskReadMBps(), 'f', 2),
                  QString::number(sys_->diskWriteMBps(), 'f', 2),
+                 humanBytes(sys_->diskReadTotalBytes()),
+                 humanBytes(sys_->diskWriteTotalBytes()),
                  QString::fromStdString(sys_->netInterface()),
                  QString::number(sys_->netRxKBps(), 'f', 1),
-                 QString::number(sys_->netTxKBps(), 'f', 1)));
+                 QString::number(sys_->netTxKBps(), 'f', 1),
+                 humanBytes(sys_->netRxTotalBytes()),
+                 humanBytes(sys_->netTxTotalBytes())));
 
     refreshProcesses();
 }
@@ -264,6 +384,13 @@ void MonitorWindow::refreshProcesses() {
             QString::number(p.cpuPercent, 'f', 1)));
         procTable_->setItem(i, 3, new QTableWidgetItem(
             QStringLiteral("%1 MB").arg(p.rssKB / 1024.0, 0, 'f', 1)));
+        // G4：每进程 IO 读写速率（KB/s；无权限/内核线程为 0）。
+        procTable_->setItem(i, 4, new QTableWidgetItem(
+            p.ioReadKBps > 0 ? QString::number(p.ioReadKBps, 'f', 1)
+                             : QStringLiteral("-")));
+        procTable_->setItem(i, 5, new QTableWidgetItem(
+            p.ioWriteKBps > 0 ? QString::number(p.ioWriteKBps, 'f', 1)
+                              : QStringLiteral("-")));
     }
 }
 

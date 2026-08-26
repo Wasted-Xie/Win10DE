@@ -4,6 +4,8 @@
 #include "systemapps/settings/defaultapps.h"
 #include "systemapps/settings/networkinfo.h"
 #include "systemapps/settings/powerinfo.h"
+#include "systemapps/common/monitorarrangement.h"  // 显示器排列控件（共享）
+#include "systemapps/common/ruleeditdialog.h"  // 窗口规则编辑对话框（共享）
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -14,40 +16,51 @@
 #include <QDBusMetaType>
 #include <QDBusReply>
 #include <QDir>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFormLayout>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QHash>
 #include <QHeaderView>
+#include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMessageBox>
-#include <QMouseEvent>
+#include <QObject>
 #include <QPainter>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QSet>
 #include <QSignalBlocker>
 #include <QSlider>
+#include <QSpinBox>
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QStandardPaths>
 #include <QStatusBar>
 #include <QTableWidget>
 #include <QTextStream>
+#include <QTimeEdit>
 #include <QTimer>
 #include <QVBoxLayout>
 
-#include <algorithm>  // std::min/std::max（排列控件基准映射）
-
 #include "ipc/config.h"
 #include "ipc/inputsettings.h"
+#include "ipc/nightlight.h"
+#include "ipc/shortcuts.h"
 #include "theme/colors.h"
 
 namespace w10de::settings {
+
+// 共享的排列控件/输出结构（w10de::common，见 common/monitorarrangement.h）。
+using w10de::common::MonitorArrangementWidget;
+using w10de::common::OutputInfo;
+using w10de::common::ModeInfo;
 
 namespace {
 
@@ -97,6 +110,9 @@ void SettingsWindow::buildUi() {
     buildNetworkPage();
     buildBluetoothPage();
     buildInputPage();
+    buildNightLightPage();
+    buildShortcutsPage();
+    buildWindowRulesPage();
     splitter->addWidget(categoryList_);
     splitter->addWidget(pages_);
     splitter->setStretchFactor(0, 0);
@@ -241,200 +257,11 @@ QDBusInterface compositorOutputsIface(QObject* parent = nullptr) {
 
 }  // namespace
 
-// （结构 OutputInfo/ModeInfo 定义于外层 w10de::settings 命名空间内；
-// Q_DECLARE_METATYPE 在文件末尾全局。）
-
 // GetOutputs 返回 a(siiiii)：(name, width, height, scalePercent, x, y)。
-// 用 Qt 标准 qdbus_cast 方式解析（直接迭代 QDBusArgument 在 Qt6 有
-// read-only 限制——gdb 定位 operator>> 断言崩溃）。
-struct OutputInfo {
-    QString name;
-    int w = 0;
-    int h = 0;
-    int scale = 100;
-    int x = 0;
-    int y = 0;
-};
-QDBusArgument& operator<<(QDBusArgument& arg, const OutputInfo& o) {
-    arg.beginStructure();
-    arg << o.name << o.w << o.h << o.scale << o.x << o.y;
-    arg.endStructure();
-    return arg;
-}
-const QDBusArgument& operator>>(const QDBusArgument& arg, OutputInfo& o) {
-    arg.beginStructure();
-    arg >> o.name >> o.w >> o.h >> o.scale >> o.x >> o.y;
-    arg.endStructure();
-    return arg;
-}
-
-// GetModes 返回 a(ii)：(width, height)。
-struct ModeInfo {
-    int w = 0;
-    int h = 0;
-};
-QDBusArgument& operator<<(QDBusArgument& arg, const ModeInfo& m) {
-    arg.beginStructure();
-    arg << m.w << m.h;
-    arg.endStructure();
-    return arg;
-}
-const QDBusArgument& operator>>(const QDBusArgument& arg, ModeInfo& m) {
-    arg.beginStructure();
-    arg >> m.w >> m.h;
-    arg.endStructure();
-    return arg;
-}
+// 结构 OutputInfo/ModeInfo 与排列控件已提取到 common/monitorarrangement.h
+// （w10settings 与 w10control 共享）。
 
 // ---- 显示器排列控件（KDE-GAP 中优先 #5：图形化排列 GUI）----
-// 自绘显示器矩形（按逻辑尺寸比例）+ 拖拽移动。坐标映射用**基准包围盒**
-// （setOutputs 时固定），拖拽不重算——避免显示器移动导致整体缩放/偏移
-// 跳变。
-class MonitorArrangementWidget : public QWidget {
-public:
-    explicit MonitorArrangementWidget(QWidget* parent = nullptr)
-        : QWidget(parent) {
-        setMinimumHeight(180);
-    }
-
-    // 设置输出列表（显示页刷新后调用）；重置拖拽与基准。
-    // 审查 M4：GetOutputs 的 w/h 是物理分辨率、x/y 是逻辑坐标——
-    // scale≠100 时混用会致矩形比例失真，此处统一换算为逻辑尺寸
-    // （显示与拖拽一致；positions() 的 x/y 不受影响）。
-    void setOutputs(const QList<OutputInfo>& outputs) {
-        outputs_ = outputs;
-        for (OutputInfo& o : outputs_) {
-            if (o.scale > 0 && o.scale != 100) {
-                o.w = qRound(o.w * 100.0 / o.scale);
-                o.h = qRound(o.h * 100.0 / o.scale);
-            }
-        }
-        dragIndex_ = -1;
-        changed_ = false;  // 应用后回读刷新会重置"已编辑"标记
-        rebuildBase();
-        update();
-    }
-
-    // 当前各输出位置（name → (x,y)，含未拖拽的原始值）。
-    QList<OutputInfo> positions() const { return outputs_; }
-    bool hasChanges() const { return changed_; }
-
-protected:
-    void paintEvent(QPaintEvent*) override;
-    void mousePressEvent(QMouseEvent* e) override;
-    void mouseMoveEvent(QMouseEvent* e) override;
-    void mouseReleaseEvent(QMouseEvent* e) override;
-    // 审查 M5：窗口拉伸后重算基准映射（排列图跟随缩放/居中）。
-    void resizeEvent(QResizeEvent*) override {
-        rebuildBase();
-        update();
-    }
-
-private:
-    // 计算基准映射（包围盒 → widget 可用区，保持比例居中）。
-    void rebuildBase() {
-        int minX = 0, minY = 0, maxX = 0, maxY = 0;
-        for (const OutputInfo& o : outputs_) {
-            minX = std::min(minX, o.x);
-            minY = std::min(minY, o.y);
-            maxX = std::max(maxX, o.x + o.w);
-            maxY = std::max(maxY, o.y + o.h);
-        }
-        baseW_ = maxX - minX;
-        baseH_ = maxY - minY;
-        const QSize avail = size() - QSize(48, 48);
-        // 审查：widget 未布局时 size() 可能为 0 → 下限防除零/负缩放。
-        baseScale_ = (baseW_ > 0 && baseH_ > 0 && avail.width() > 0
-                      && avail.height() > 0)
-            ? std::max(0.01,
-                std::min(static_cast<double>(avail.width()) / baseW_,
-                         static_cast<double>(avail.height()) / baseH_))
-            : 1.0;
-        baseOx_ = (width() - baseW_ * baseScale_) / 2 - minX * baseScale_;
-        baseOy_ = (height() - baseH_ * baseScale_) / 2 - minY * baseScale_;
-    }
-    // 输出逻辑坐标 → widget 像素（用基准映射）。
-    QRect mapToWidget(const OutputInfo& o) const {
-        return QRect(qRound(baseOx_ + o.x * baseScale_),
-                     qRound(baseOy_ + o.y * baseScale_),
-                     qRound(o.w * baseScale_), qRound(o.h * baseScale_));
-    }
-
-    QList<OutputInfo> outputs_;
-    int dragIndex_ = -1;
-    int dragOffsetX_ = 0, dragOffsetY_ = 0;  // 按下点与矩形左上偏移（像素）
-    bool changed_ = false;
-    // 基准映射参数。
-    int baseW_ = 1, baseH_ = 1;
-    double baseScale_ = 1.0;
-    int baseOx_ = 0, baseOy_ = 0;
-};
-
-void MonitorArrangementWidget::paintEvent(QPaintEvent*) {
-    QPainter p(this);
-    p.fillRect(rect(), QColor(20, 24, 30));
-    if (outputs_.isEmpty()) {
-        p.setPen(QColor(150, 155, 165));
-        p.drawText(rect(), Qt::AlignCenter,
-                   QStringLiteral("无输出（compositor 未连接）"));
-        return;
-    }
-    for (int i = 0; i < outputs_.size(); ++i) {
-        const OutputInfo& o = outputs_.at(i);
-        const QRect r = mapToWidget(o);
-        const bool selected = (i == dragIndex_);
-        p.setPen(QPen(selected ? QColor(0, 120, 215)
-                               : QColor(90, 95, 105), 2));
-        p.setBrush(QColor(45, 50, 60));
-        p.drawRect(r.adjusted(0, 0, -1, -1));
-        p.setPen(QColor(235, 235, 235));
-        p.drawText(r.adjusted(6, 6, -6, -6),
-                   Qt::AlignLeft | Qt::AlignTop,
-                   QStringLiteral("%1\n%2×%3").arg(o.name).arg(o.w).arg(o.h));
-    }
-    p.setPen(QColor(150, 155, 165));
-    p.drawText(rect().adjusted(8, 8, -8, -8),
-               Qt::AlignBottom | Qt::AlignLeft,
-               QStringLiteral("拖拽显示器调整排列，然后点击【应用排列】按钮。"));
-}
-
-void MonitorArrangementWidget::mousePressEvent(QMouseEvent* e) {
-    for (int i = outputs_.size() - 1; i >= 0; --i) {
-        if (mapToWidget(outputs_.at(i))
-                .adjusted(-4, -4, 4, 4).contains(e->pos())) {
-            dragIndex_ = i;
-            const QRect r = mapToWidget(outputs_.at(i));
-            dragOffsetX_ = e->pos().x() - r.x();
-            dragOffsetY_ = e->pos().y() - r.y();
-            update();
-            return;
-        }
-    }
-    dragIndex_ = -1;
-}
-
-void MonitorArrangementWidget::mouseMoveEvent(QMouseEvent* e) {
-    if (dragIndex_ < 0 || dragIndex_ >= outputs_.size()) {
-        return;
-    }
-    OutputInfo& o = outputs_[dragIndex_];
-    const QRect r0 = mapToWidget(o);  // 基准映射，不随拖拽漂移
-    // 像素位移 → 逻辑位移；网格对齐用 qRound（对称四舍五入，
-    // C++ 整除向零截断对负值不对称）。
-    const int dxPx = e->pos().x() - (r0.x() + dragOffsetX_);
-    const int dyPx = e->pos().y() - (r0.y() + dragOffsetY_);
-    o.x = qRound((o.x + qRound(dxPx / baseScale_)) / 10.0) * 10;
-    o.y = qRound((o.y + qRound(dyPx / baseScale_)) / 10.0) * 10;
-    changed_ = true;
-    update();
-}
-
-void MonitorArrangementWidget::mouseReleaseEvent(QMouseEvent*) {
-    if (dragIndex_ >= 0) {
-        dragIndex_ = -1;
-        update();
-    }
-}
 
 void SettingsWindow::buildDisplayPage() {
     auto* page = new QWidget(pages_);
@@ -1396,6 +1223,10 @@ void SettingsWindow::selectCategory(const QString& name) {
         {QStringLiteral("network"), QStringLiteral("网络")},
         {QStringLiteral("bluetooth"), QStringLiteral("蓝牙")},
         {QStringLiteral("input"), QStringLiteral("输入设备")},
+        {QStringLiteral("nightlight"), QStringLiteral("Night Light")},
+        {QStringLiteral("night"), QStringLiteral("Night Light")},
+        {QStringLiteral("shortcuts"), QStringLiteral("快捷键")},
+        {QStringLiteral("rules"), QStringLiteral("窗口规则")},
     };
     const QString target = kAliases.value(name, name);
     for (int i = 0; i < categoryList_->count(); ++i) {
@@ -1623,8 +1454,622 @@ void SettingsWindow::saveInputSettings() {
         .arg(s.repeatRate).arg(s.repeatDelay));
 }
 
-}  // namespace w10de::settings
+// ---- Night Light 页（G1：夜间色温，[night_light] + D-Bus 热应用）----
 
-// Q_DECLARE_METATYPE 必须在全局命名空间（qdbus_cast 自定义结构用）。
-Q_DECLARE_METATYPE(w10de::settings::OutputInfo)
-Q_DECLARE_METATYPE(w10de::settings::ModeInfo)
+void SettingsWindow::buildNightLightPage() {
+    auto* page = new QWidget(pages_);
+    auto* lay = new QVBoxLayout(page);
+
+    auto* title = new QLabel(QStringLiteral("Night Light（夜间色温）"), page);
+    title->setStyleSheet(QStringLiteral("font-size: 15px; font-weight: bold;"));
+    lay->addWidget(title);
+    auto* hint = new QLabel(QStringLiteral(
+        "夜间时段降低屏幕色温（Tanner Helland 色温算法；经 "
+        "org.w10de.Compositor 热应用，无需重启会话）。"), page);
+    hint->setStyleSheet(QStringLiteral("color: %1;")
+        .arg(theme::kTextSecondary().name()));
+    hint->setWordWrap(true);
+    lay->addWidget(hint);
+
+    const w10de::ipc::NightLightConfig cfg =
+        w10de::ipc::loadNightLightConfig(configPath().toStdString());
+
+    nightEnabledCheck_ = new QCheckBox(QStringLiteral("启用 Night Light"), page);
+    nightEnabledCheck_->setChecked(cfg.enabled);
+    lay->addWidget(nightEnabledCheck_);
+
+    auto* grid = new QGridLayout;
+    grid->setHorizontalSpacing(12);
+    grid->setVerticalSpacing(10);
+    grid->addWidget(new QLabel(QStringLiteral("夜间色温"), page), 0, 0);
+    auto* tempRow = new QHBoxLayout;
+    nightTempSlider_ = new QSlider(Qt::Horizontal, page);
+    nightTempSlider_->setRange(1000, 8000);
+    nightTempSlider_->setSingleStep(100);
+    nightTempSlider_->setValue(cfg.temperature);
+    tempRow->addWidget(nightTempSlider_, 1);
+    nightTempValue_ = new QLabel(page);
+    tempRow->addWidget(nightTempValue_);
+    grid->addLayout(tempRow, 0, 1);
+    grid->addWidget(new QLabel(QStringLiteral("开始时间"), page), 1, 0);
+    nightStartEdit_ = new QTimeEdit(page);
+    nightStartEdit_->setDisplayFormat(QStringLiteral("HH:mm"));
+    nightStartEdit_->setTime(QTime(cfg.startMinutes / 60,
+                                   cfg.startMinutes % 60));
+    grid->addWidget(nightStartEdit_, 1, 1);
+    grid->addWidget(new QLabel(QStringLiteral("结束时间"), page), 2, 0);
+    nightEndEdit_ = new QTimeEdit(page);
+    nightEndEdit_->setDisplayFormat(QStringLiteral("HH:mm"));
+    nightEndEdit_->setTime(QTime(cfg.endMinutes / 60, cfg.endMinutes % 60));
+    grid->addWidget(nightEndEdit_, 2, 1);
+    lay->addLayout(grid);
+
+    auto updateTempLabel = [this]() {
+        nightTempValue_->setText(QStringLiteral("%1 K")
+            .arg(nightTempSlider_->value()));
+    };
+    connect(nightTempSlider_, &QSlider::valueChanged, this,
+            [updateTempLabel](int) { updateTempLabel(); });
+    updateTempLabel();
+
+    auto* btnRow = new QHBoxLayout;
+    auto* applyBtn = new QPushButton(QStringLiteral("应用"), page);
+    btnRow->addWidget(applyBtn);
+    btnRow->addStretch(1);
+    lay->addLayout(btnRow);
+    connect(applyBtn, &QPushButton::clicked, this, &SettingsWindow::saveNightLight);
+
+    nightStatus_ = new QLabel(QStringLiteral("（从配置加载，未修改）"), page);
+    nightStatus_->setStyleSheet(QStringLiteral("color: %1;")
+        .arg(theme::kTextSecondary().name()));
+    nightStatus_->setWordWrap(true);
+    lay->addWidget(nightStatus_);
+    lay->addStretch(1);
+
+    pages_->addWidget(page);
+    categoryList_->addItem(QStringLiteral("Night Light"));
+}
+
+void SettingsWindow::saveNightLight() {
+    w10de::ipc::NightLightConfig cfg;
+    cfg.enabled = nightEnabledCheck_->isChecked();
+    cfg.temperature = nightTempSlider_->value();
+    const QTime start = nightStartEdit_->time();
+    const QTime end = nightEndEdit_->time();
+    cfg.startMinutes = start.hour() * 60 + start.minute();
+    cfg.endMinutes = end.hour() * 60 + end.minute();
+    // 审查 M2（G1）：开始=结束会与启动加载回退默认的语义漂移——拒绝。
+    if (cfg.startMinutes == cfg.endMinutes) {
+        QMessageBox::warning(this, QStringLiteral("设置"),
+            QStringLiteral("Night Light 开始与结束时间不能相同。"));
+        nightStatus_->setText(QStringLiteral("开始=结束，未保存。"));
+        return;
+    }
+
+    // 先写 config（compositor 未运行时保留设置，重启会话生效）。
+    w10de::Config config = w10de::Config::load(configPath().toStdString());
+    config.set("night_light", "enabled", cfg.enabled ? "1" : "0");
+    config.set("night_light", "temperature",
+               std::to_string(cfg.temperature));
+    const auto hhmm = [](const QTime& t) {
+        return QStringLiteral("%1:%2")
+            .arg(t.hour(), 2, 10, QLatin1Char('0'))
+            .arg(t.minute(), 2, 10, QLatin1Char('0')).toStdString();
+    };
+    config.set("night_light", "start_time", hhmm(start));
+    config.set("night_light", "end_time", hhmm(end));
+    if (!config.save(configPath().toStdString())) {
+        QMessageBox::warning(this, QStringLiteral("设置"),
+            QStringLiteral("保存配置失败（%1）。").arg(configPath()));
+        nightStatus_->setText(QStringLiteral("保存失败，未应用。"));
+        return;
+    }
+
+    // 热应用：org.w10de.Compositor SetNightLight(b,i,i,i)。
+    // 失败（headless/合成器未运行）降级：配置已保存，重启会话生效。
+    QDBusInterface iface(QStringLiteral("org.w10de.Compositor"),
+                         QStringLiteral("/Outputs"),
+                         QStringLiteral("org.w10de.Compositor"),
+                         QDBusConnection::sessionBus(), this);
+    if (!iface.isValid()) {
+        nightStatus_->setText(QStringLiteral(
+            "配置已保存；合成器未运行（headless），重启会话后生效。"));
+        return;
+    }
+    QDBusMessage reply = iface.call(QStringLiteral("SetNightLight"),
+        QVariant(cfg.enabled), QVariant(cfg.temperature),
+        QVariant(cfg.startMinutes), QVariant(cfg.endMinutes));
+    if (reply.type() != QDBusMessage::ReplyMessage) {
+        nightStatus_->setText(QStringLiteral(
+            "配置已保存；热应用失败（%1），重启会话后生效。")
+            .arg(reply.errorMessage()));
+        return;
+    }
+    nightStatus_->setText(QStringLiteral(
+        "已保存并热应用：%1，%2 K，%3–%4。")
+        .arg(cfg.enabled ? QStringLiteral("开启") : QStringLiteral("关闭"))
+        .arg(cfg.temperature)
+        .arg(start.toString(QStringLiteral("HH:mm")),
+             end.toString(QStringLiteral("HH:mm"))));
+}
+
+// ---- 快捷键页（G1：[shortcuts] 配置编辑）----
+
+namespace {
+
+// 动作 → 中文名（快捷键页表格列 0）。
+QString shortcutActionLabel(w10de::ShortcutAction action) {
+    switch (action) {
+    case w10de::ShortcutAction::Close: return QStringLiteral("关闭窗口");
+    case w10de::ShortcutAction::Maximize: return QStringLiteral("最大化/还原");
+    case w10de::ShortcutAction::Minimize: return QStringLiteral("最小化");
+    case w10de::ShortcutAction::SnapLeft: return QStringLiteral("左半屏");
+    case w10de::ShortcutAction::SnapRight: return QStringLiteral("右半屏");
+    case w10de::ShortcutAction::SnapUp: return QStringLiteral("最大化（Win+↑）");
+    case w10de::ShortcutAction::SnapDown: return QStringLiteral("还原（Win+↓）");
+    case w10de::ShortcutAction::SnapLayout: return QStringLiteral("Snap 布局选择器");
+    case w10de::ShortcutAction::Lock: return QStringLiteral("锁屏");
+    case w10de::ShortcutAction::Quit: return QStringLiteral("退出合成器");
+    case w10de::ShortcutAction::Clipboard: return QStringLiteral("剪贴板历史");
+    case w10de::ShortcutAction::Workspace1: return QStringLiteral("工作区 1");
+    case w10de::ShortcutAction::Workspace2: return QStringLiteral("工作区 2");
+    case w10de::ShortcutAction::Workspace3: return QStringLiteral("工作区 3");
+    case w10de::ShortcutAction::Workspace4: return QStringLiteral("工作区 4");
+    default: return QString();
+    }
+}
+
+// 动作 → 默认绑定文本（与 shortcuts.cpp defaultBinding 一致，显示用）。
+QString defaultShortcutText(w10de::ShortcutAction action) {
+    switch (action) {
+    case w10de::ShortcutAction::Close: return QStringLiteral("win+q");
+    case w10de::ShortcutAction::Maximize: return QStringLiteral("win+f");
+    case w10de::ShortcutAction::Minimize: return QStringLiteral("win+m");
+    case w10de::ShortcutAction::SnapLeft: return QStringLiteral("win+left");
+    case w10de::ShortcutAction::SnapRight: return QStringLiteral("win+right");
+    case w10de::ShortcutAction::SnapUp: return QStringLiteral("win+up");
+    case w10de::ShortcutAction::SnapDown: return QStringLiteral("win+down");
+    case w10de::ShortcutAction::SnapLayout: return QStringLiteral("win+z");
+    case w10de::ShortcutAction::Lock: return QStringLiteral("win+l");
+    case w10de::ShortcutAction::Quit: return QStringLiteral("win+escape");
+    case w10de::ShortcutAction::Clipboard: return QStringLiteral("win+v");
+    case w10de::ShortcutAction::Workspace1: return QStringLiteral("win+1");
+    case w10de::ShortcutAction::Workspace2: return QStringLiteral("win+2");
+    case w10de::ShortcutAction::Workspace3: return QStringLiteral("win+3");
+    case w10de::ShortcutAction::Workspace4: return QStringLiteral("win+4");
+    default: return QString();
+    }
+}
+
+// 规则编辑对话框（w10de::common::makeRuleDialog，与 w10control 共享；
+// 字段/校验见 common/ruleeditdialog.h）。
+
+}  // namespace
+
+void SettingsWindow::buildShortcutsPage() {
+    auto* page = new QWidget(pages_);
+    auto* lay = new QVBoxLayout(page);
+
+    auto* title = new QLabel(QStringLiteral("快捷键"), page);
+    title->setStyleSheet(QStringLiteral("font-size: 15px; font-weight: bold;"));
+    lay->addWidget(title);
+    auto* hint = new QLabel(QStringLiteral(
+        "修改 [shortcuts] 配置；格式如 win+q / ctrl+shift+a。"
+        "保存后重启会话生效。"), page);
+    hint->setStyleSheet(QStringLiteral("color: %1;")
+        .arg(theme::kTextSecondary().name()));
+    hint->setWordWrap(true);
+    lay->addWidget(hint);
+
+    shortcutTable_ = new QTableWidget(page);
+    shortcutTable_->setColumnCount(2);
+    shortcutTable_->setHorizontalHeaderLabels(
+        {QStringLiteral("动作"), QStringLiteral("绑定")});
+    shortcutTable_->horizontalHeader()->setStretchLastSection(true);
+    shortcutTable_->horizontalHeader()->setSectionResizeMode(
+        0, QHeaderView::Stretch);
+    shortcutTable_->verticalHeader()->setVisible(false);
+    shortcutTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    shortcutTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    lay->addWidget(shortcutTable_);
+
+    const w10de::Config config =
+        w10de::Config::load(configPath().toStdString());
+    const int actionCount = static_cast<int>(w10de::ShortcutAction::Count);
+    shortcutTable_->setRowCount(actionCount);
+    for (int a = 0; a < actionCount; ++a) {
+        const auto action = static_cast<w10de::ShortcutAction>(a);
+        auto* nameItem = new QTableWidgetItem(shortcutActionLabel(action));
+        // 动作枚举存入 UserRole（编辑/保存时反查）。
+        nameItem->setData(Qt::UserRole, a);
+        shortcutTable_->setItem(a, 0, nameItem);
+        // 绑定文本：配置值；未配置显示默认。
+        const std::string key = w10de::shortcutActionName(action);
+        const QString configured =
+            QString::fromStdString(config.get("shortcuts", key));
+        shortcutTable_->setItem(a, 1, new QTableWidgetItem(
+            configured.isEmpty()
+                ? QStringLiteral("（默认）%1").arg(defaultShortcutText(action))
+                : configured));
+    }
+    connect(shortcutTable_, &QTableWidget::cellDoubleClicked, this,
+            [this](int row, int) { editShortcut(row); });
+
+    auto* btnRow = new QHBoxLayout;
+    auto* editBtn = new QPushButton(QStringLiteral("修改选中…"), page);
+    auto* saveBtn = new QPushButton(QStringLiteral("保存"), page);
+    btnRow->addWidget(editBtn);
+    btnRow->addWidget(saveBtn);
+    btnRow->addStretch(1);
+    lay->addLayout(btnRow);
+    connect(editBtn, &QPushButton::clicked, this, [this] {
+        editShortcut(shortcutTable_->currentRow());
+    });
+    connect(saveBtn, &QPushButton::clicked, this, &SettingsWindow::saveShortcuts);
+
+    shortcutsStatus_ = new QLabel(QStringLiteral("（未修改）"), page);
+    shortcutsStatus_->setStyleSheet(QStringLiteral("color: %1;")
+        .arg(theme::kTextSecondary().name()));
+    shortcutsStatus_->setWordWrap(true);
+    lay->addWidget(shortcutsStatus_);
+    lay->addStretch(1);
+
+    pages_->addWidget(page);
+    categoryList_->addItem(QStringLiteral("快捷键"));
+}
+
+void SettingsWindow::editShortcut(int row) {
+    if (row < 0 || row >= shortcutTable_->rowCount()) {
+        return;
+    }
+    QString current = shortcutTable_->item(row, 1)->text();
+    // "（默认）win+q" 前缀剥离：编辑框只给实际绑定文本，避免把
+    // "（默认）" 当绑定内容再保存。
+    if (current.startsWith(QStringLiteral("（默认）"))) {
+        current.remove(0, QStringLiteral("（默认）").size());
+    }
+    bool ok = false;
+    const QString text = QInputDialog::getText(this,
+        QStringLiteral("修改快捷键"),
+        QStringLiteral("输入绑定（如 win+q；留空 = 恢复默认）："),
+        QLineEdit::Normal, current, &ok);
+    if (!ok) {
+        return;
+    }
+    const std::string trimmed = text.trimmed().toStdString();
+    if (!trimmed.empty()) {
+        const w10de::ShortcutBinding parsed =
+            w10de::parseShortcut(trimmed);
+        if (!parsed.valid()) {
+            QMessageBox::warning(this, QStringLiteral("快捷键"),
+                QStringLiteral("无效绑定：%1。格式如 win+q / ctrl+shift+a。")
+                    .arg(text));
+            return;
+        }
+    }
+    const int action = shortcutTable_->item(row, 0)->data(Qt::UserRole).toInt();
+    shortcutTable_->item(row, 1)->setText(trimmed.empty()
+        ? QStringLiteral("（默认）%1").arg(defaultShortcutText(
+              static_cast<w10de::ShortcutAction>(action)))
+        : QString::fromStdString(trimmed));
+    shortcutTable_->setCurrentCell(row, 0);
+    shortcutsStatus_->setText(QStringLiteral(
+        "已修改（未保存）——点击【保存】写入配置。"));
+}
+
+void SettingsWindow::saveShortcuts() {
+    w10de::Config config = w10de::Config::load(configPath().toStdString());
+    // 清空旧 [shortcuts] 键（保留其他段），再按表格逐行写回。
+    for (const std::string& key : config.sectionKeys("shortcuts")) {
+        config.remove("shortcuts", key);
+    }
+    for (int row = 0; row < shortcutTable_->rowCount(); ++row) {
+        const int action = shortcutTable_->item(row, 0)
+                               ->data(Qt::UserRole).toInt();
+        const std::string key = w10de::shortcutActionName(
+            static_cast<w10de::ShortcutAction>(action));
+        const QString text = shortcutTable_->item(row, 1)->text();
+        // "（默认）…" 前缀 = 未配置（恢复默认绑定）。
+        if (text.startsWith(QStringLiteral("（默认）"))) {
+            config.remove("shortcuts", key);
+            continue;
+        }
+        config.set("shortcuts", key, text.trimmed().toStdString());
+    }
+    if (!config.save(configPath().toStdString())) {
+        QMessageBox::warning(this, QStringLiteral("快捷键"),
+            QStringLiteral("保存配置失败（%1）。").arg(configPath()));
+        shortcutsStatus_->setText(QStringLiteral("保存失败。"));
+        return;
+    }
+    shortcutsStatus_->setText(QStringLiteral(
+        "已保存 [shortcuts]。重启会话后生效。"));
+}
+
+// ---- 窗口规则页（G1：[window_rules] 增删改）----
+
+namespace {
+
+// 规则匹配描述（表格列 1）。
+QString ruleMatchText(const w10de::ipc::WindowRule& r) {
+    QStringList parts;
+    if (!r.matchAppId.empty()) {
+        parts << QStringLiteral("app_id=%1")
+                     .arg(QString::fromStdString(r.matchAppId));
+    }
+    if (!r.matchTitle.empty()) {
+        parts << QStringLiteral("title=%1")
+                     .arg(QString::fromStdString(r.matchTitle));
+    }
+    return parts.isEmpty() ? QStringLiteral("（空匹配）")
+                           : parts.join(QStringLiteral(" & "));
+}
+
+// 规则动作描述（表格列 2）。
+QString ruleActionText(const w10de::ipc::WindowRule& r) {
+    QStringList parts;
+    if (r.alwaysOnTop) {
+        parts << QStringLiteral("置顶");
+    }
+    if (r.borderless) {
+        parts << QStringLiteral("无边框");
+    }
+    if (r.workspace >= 0) {
+        parts << QStringLiteral("工作区 %1").arg(r.workspace + 1);
+    }
+    if (r.hasGeometry) {
+        parts << QStringLiteral("几何 %1,%2,%3,%4")
+                     .arg(r.geomX).arg(r.geomY).arg(r.geomW).arg(r.geomH);
+    }
+    return parts.isEmpty() ? QStringLiteral("（无动作）")
+                           : parts.join(QStringLiteral("，"));
+}
+
+}  // namespace
+
+void SettingsWindow::buildWindowRulesPage() {
+    auto* page = new QWidget(pages_);
+    auto* lay = new QVBoxLayout(page);
+
+    auto* title = new QLabel(QStringLiteral("窗口规则"), page);
+    title->setStyleSheet(QStringLiteral("font-size: 15px; font-weight: bold;"));
+    lay->addWidget(title);
+    auto* hint = new QLabel(QStringLiteral(
+        "按应用/标题匹配窗口并应用动作（对标 KWin Window Rules）。"
+        "保存后重启会话生效。"), page);
+    hint->setStyleSheet(QStringLiteral("color: %1;")
+        .arg(theme::kTextSecondary().name()));
+    hint->setWordWrap(true);
+    lay->addWidget(hint);
+
+    rules_ = w10de::ipc::loadWindowRules(configPath().toStdString());
+
+    rulesTable_ = new QTableWidget(page);
+    rulesTable_->setColumnCount(3);
+    rulesTable_->setHorizontalHeaderLabels(
+        {QStringLiteral("名称"), QStringLiteral("匹配"), QStringLiteral("动作")});
+    rulesTable_->horizontalHeader()->setStretchLastSection(true);
+    rulesTable_->horizontalHeader()->setSectionResizeMode(
+        0, QHeaderView::Stretch);
+    rulesTable_->horizontalHeader()->setSectionResizeMode(
+        1, QHeaderView::ResizeToContents);
+    rulesTable_->horizontalHeader()->setSectionResizeMode(
+        2, QHeaderView::Stretch);
+    rulesTable_->verticalHeader()->setVisible(false);
+    rulesTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    rulesTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    lay->addWidget(rulesTable_);
+    refreshRulesTable();
+    connect(rulesTable_, &QTableWidget::cellDoubleClicked, this,
+            [this](int row, int) { editRuleDialog(row); });
+
+    auto* btnRow = new QHBoxLayout;
+    auto* addBtn = new QPushButton(QStringLiteral("新增…"), page);
+    auto* editBtn = new QPushButton(QStringLiteral("编辑…"), page);
+    auto* delBtn = new QPushButton(QStringLiteral("删除"), page);
+    auto* saveBtn = new QPushButton(QStringLiteral("保存"), page);
+    btnRow->addWidget(addBtn);
+    btnRow->addWidget(editBtn);
+    btnRow->addWidget(delBtn);
+    btnRow->addWidget(saveBtn);
+    btnRow->addStretch(1);
+    lay->addLayout(btnRow);
+    connect(addBtn, &QPushButton::clicked, this, &SettingsWindow::addRuleDialog);
+    connect(editBtn, &QPushButton::clicked, this, [this] {
+        editRuleDialog(rulesTable_->currentRow());
+    });
+    connect(delBtn, &QPushButton::clicked, this, [this] {
+        removeRule(rulesTable_->currentRow());
+    });
+    connect(saveBtn, &QPushButton::clicked, this, &SettingsWindow::saveRules);
+
+    rulesStatus_ = new QLabel(QStringLiteral("（未修改）"), page);
+    rulesStatus_->setStyleSheet(QStringLiteral("color: %1;")
+        .arg(theme::kTextSecondary().name()));
+    rulesStatus_->setWordWrap(true);
+    lay->addWidget(rulesStatus_);
+    lay->addStretch(1);
+
+    pages_->addWidget(page);
+    categoryList_->addItem(QStringLiteral("窗口规则"));
+}
+
+void SettingsWindow::refreshRulesTable() {
+    rulesTable_->setRowCount(static_cast<int>(rules_.size()));
+    for (int i = 0; i < static_cast<int>(rules_.size()); ++i) {
+        const w10de::ipc::WindowRule& r = rules_.at(static_cast<size_t>(i));
+        rulesTable_->setItem(i, 0,
+            new QTableWidgetItem(QString::fromStdString(r.name)));
+        rulesTable_->setItem(i, 1, new QTableWidgetItem(ruleMatchText(r)));
+        rulesTable_->setItem(i, 2, new QTableWidgetItem(ruleActionText(r)));
+    }
+}
+
+void SettingsWindow::addRuleDialog() {
+    w10de::ipc::WindowRule empty;
+    w10de::common::RuleDialogFields f;
+    QDialog* dlg = w10de::common::makeRuleDialog(this, empty, &f);
+    if (dlg->exec() != QDialog::Accepted) {
+        delete dlg;
+        return;
+    }
+    const QString name = f.name->text().trimmed();
+    if (name.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("窗口规则"),
+            QStringLiteral("规则名称不能为空。"));
+        delete dlg;
+        return;
+    }
+    // S1 修复：禁止破坏 config 行解析的字符（= ; &）。
+    const QString inputErr = w10de::common::ruleInputError(
+        name, f.matchValue->text(),
+        f.secondMatchValue != nullptr ? f.secondMatchValue->text()
+                                      : QString());
+    if (!inputErr.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("窗口规则"), inputErr);
+        delete dlg;
+        return;
+    }
+    for (const w10de::ipc::WindowRule& r : rules_) {
+        if (r.name == name.toStdString()) {
+            QMessageBox::warning(this, QStringLiteral("窗口规则"),
+                QStringLiteral("规则名称已存在：%1").arg(name));
+            delete dlg;
+            return;
+        }
+    }
+    w10de::ipc::WindowRule rule = w10de::common::ruleFromFields(f, empty);
+    if (rule.matchAppId.empty() && rule.matchTitle.empty()) {
+        QMessageBox::warning(this, QStringLiteral("窗口规则"),
+            QStringLiteral("匹配值不能为空。"));
+        delete dlg;
+        return;
+    }
+    if (rule.hasGeometry && (rule.geomW <= 0 || rule.geomH <= 0)) {
+        QMessageBox::warning(this, QStringLiteral("窗口规则"),
+            QStringLiteral("几何宽高必须为正。"));
+        delete dlg;
+        return;
+    }
+    rules_.push_back(rule);
+    refreshRulesTable();
+    rulesStatus_->setText(QStringLiteral(
+        "已修改（未保存）——点击【保存】写入配置。"));
+    delete dlg;
+}
+
+void SettingsWindow::editRuleDialog(int row) {
+    if (row < 0 || row >= static_cast<int>(rules_.size())) {
+        return;
+    }
+    const w10de::ipc::WindowRule original = rules_.at(static_cast<size_t>(row));
+    w10de::common::RuleDialogFields f;
+    QDialog* dlg = w10de::common::makeRuleDialog(this, original, &f);
+    if (dlg->exec() != QDialog::Accepted) {
+        delete dlg;
+        return;
+    }
+    const QString name = f.name->text().trimmed();
+    if (name.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("窗口规则"),
+            QStringLiteral("规则名称不能为空。"));
+        delete dlg;
+        return;
+    }
+    // S1 修复：禁止破坏 config 行解析的字符（= ; &）。
+    const QString inputErr = w10de::common::ruleInputError(
+        name, f.matchValue->text(),
+        f.secondMatchValue != nullptr ? f.secondMatchValue->text()
+                                      : QString());
+    if (!inputErr.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("窗口规则"), inputErr);
+        delete dlg;
+        return;
+    }
+    for (size_t i = 0; i < rules_.size(); ++i) {
+        if (i != static_cast<size_t>(row) &&
+                rules_.at(i).name == name.toStdString()) {
+            QMessageBox::warning(this, QStringLiteral("窗口规则"),
+                QStringLiteral("规则名称已存在：%1").arg(name));
+            delete dlg;
+            return;
+        }
+    }
+    w10de::ipc::WindowRule rule = w10de::common::ruleFromFields(f, original);
+    if (rule.matchAppId.empty() && rule.matchTitle.empty()) {
+        QMessageBox::warning(this, QStringLiteral("窗口规则"),
+            QStringLiteral("匹配值不能为空。"));
+        delete dlg;
+        return;
+    }
+    if (rule.hasGeometry && (rule.geomW <= 0 || rule.geomH <= 0)) {
+        QMessageBox::warning(this, QStringLiteral("窗口规则"),
+            QStringLiteral("几何宽高必须为正。"));
+        delete dlg;
+        return;
+    }
+    rules_[static_cast<size_t>(row)] = rule;
+    refreshRulesTable();
+    rulesStatus_->setText(QStringLiteral(
+        "已修改（未保存）——点击【保存】写入配置。"));
+    delete dlg;
+}
+
+void SettingsWindow::removeRule(int row) {
+    if (row < 0 || row >= static_cast<int>(rules_.size())) {
+        return;
+    }
+    rules_.erase(rules_.begin() + row);
+    refreshRulesTable();
+    rulesStatus_->setText(QStringLiteral(
+        "已删除（未保存）——点击【保存】写入配置。"));
+}
+
+void SettingsWindow::saveRules() {
+    w10de::Config config = w10de::Config::load(configPath().toStdString());
+    // 清空旧 [window_rules] 键（保留其他段），再按内存列表写回。
+    for (const std::string& key : config.sectionKeys("window_rules")) {
+        config.remove("window_rules", key);
+    }
+    for (const w10de::ipc::WindowRule& r : rules_) {
+        // 序列化与 parseRuleLine 兼容：match 段 app_id=X&title=Y 组合。
+        QStringList matchParts;
+        if (!r.matchAppId.empty()) {
+            matchParts << QStringLiteral("app_id=%1")
+                              .arg(QString::fromStdString(r.matchAppId));
+        }
+        if (!r.matchTitle.empty()) {
+            matchParts << QStringLiteral("title=%1")
+                              .arg(QString::fromStdString(r.matchTitle));
+        }
+        const QString match = matchParts.join(QStringLiteral("&"));
+        QStringList actParts;
+        if (r.alwaysOnTop) {
+            actParts << QStringLiteral("always_on_top");
+        }
+        if (r.borderless) {
+            actParts << QStringLiteral("borderless");
+        }
+        if (r.workspace >= 0) {
+            actParts << QStringLiteral("workspace=%1").arg(r.workspace);
+        }
+        if (r.hasGeometry) {
+            actParts << QStringLiteral("geometry=%1,%2,%3,%4")
+                            .arg(r.geomX).arg(r.geomY).arg(r.geomW)
+                            .arg(r.geomH);
+        }
+        const QString line = match + QLatin1Char(';')
+            + actParts.join(QLatin1Char('|'));
+        config.set("window_rules", r.name, line.toStdString());
+    }
+    if (!config.save(configPath().toStdString())) {
+        QMessageBox::warning(this, QStringLiteral("窗口规则"),
+            QStringLiteral("保存配置失败（%1）。").arg(configPath()));
+        rulesStatus_->setText(QStringLiteral("保存失败。"));
+        return;
+    }
+    rulesStatus_->setText(QStringLiteral(
+        "已保存 [window_rules]。重启会话后生效。"));
+}
+
+}  // namespace w10de::settings

@@ -58,6 +58,20 @@ int runSelfTest() {
     if (static_cast<int>(info.cpuTotalHistory().size()) > SysInfo::kHistory) {
         fail("history exceeds kHistory");
     }
+    // G4：内存/磁盘/网络历史缓冲约束 + 累计总量非负。
+    if (static_cast<int>(info.memHistory().size()) > SysInfo::kHistory ||
+            static_cast<int>(info.diskReadHistory().size()) > SysInfo::kHistory ||
+            static_cast<int>(info.diskWriteHistory().size()) > SysInfo::kHistory ||
+            static_cast<int>(info.netRxHistory().size()) > SysInfo::kHistory ||
+            static_cast<int>(info.netTxHistory().size()) > SysInfo::kHistory) {
+        fail("G4 history exceeds kHistory");
+    }
+    if (info.diskReadTotalBytes() == 0 && info.diskWriteTotalBytes() == 0) {
+        out << "note: disk totals are 0（空闲磁盘，非错误）\n";
+    }
+    if (info.netRxTotalBytes() == 0 && info.netTxTotalBytes() == 0) {
+        out << "note: net totals are 0（空闲接口，非错误）\n";
+    }
     // 每核数量与历史结构一致。
     if (info.cpuPerCoreHistory().size() !=
             static_cast<size_t>(info.coreCount())) {
@@ -93,7 +107,8 @@ int runSelfTest() {
         if (selfRss == 0 || selfRss >= info.mem().totalKb) {
             fail("self rss out of sane range (stat 字段解析错误?)");
         }
-        // 第二次采样应有 CPU 增量（本进程在运行；修正后必 > 0）。
+        // 审查 L5：第二次采样本进程 CPU 增量可能为 0（采样窗口过短）——
+        // 非错误，note 而非 fail。
         info.sample();
         const auto procs2 = info.processList();
         bool selfCpuPositive = false;
@@ -113,8 +128,16 @@ int runSelfTest() {
         if (!selfCpuPositive) {
             out << "note: self cpu%=0（采样窗口过短，非错误）\n";
         }
+        // G4：每进程 IO 字段（self 的 IO 读/写速率 >= 0；无 /proc/pid/io
+        // 权限时 readProcIo 失败返回 0）。
+        if (procs2[0].ioReadKBps < 0.0 || procs2[0].ioWriteKBps < 0.0) {
+            fail("process IO rate negative");
+        }
         out << "OK process-list (self pid=" << static_cast<int>(::getpid())
-            << " rss=" << selfRss << "KB)\n";
+            << " rss=" << selfRss << "KB"
+            << " io=" << QString::number(procs2[0].ioReadKBps, 'f', 1)
+            << "/" << QString::number(procs2[0].ioWriteKBps, 'f', 1)
+            << " KB/s)\n";
     }
 
     out << "SELFTEST OK: cores=" << info.coreCount()

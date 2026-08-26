@@ -852,6 +852,12 @@ void View::handleMap(wl_listener* listener, void* /*data*/) {
     }
     // map 前客户端已请求最大化（启动即最大化）：此时应用最大化几何，
     // 并保存当前（层叠后的）位置作为恢复几何。
+    if (view->pendingFullscreen_) {
+        // G2：map 前未初始化的 fullscreen 请求（surface 已 initialized，
+        // setMaximized 安全）。
+        view->pendingFullscreen_ = false;
+        view->setMaximized(true);
+    }
     if (view->maximized_) {
         int outW = 0, outH = 0;
         if (view->compositor_.outputUsableSize(
@@ -961,8 +967,23 @@ void View::handleRequestMinimize(wl_listener* listener, void* /*data*/) {
 void View::handleRequestFullscreen(wl_listener* listener, void* /*data*/) {
     // M2a：fullscreen 暂按最大化处理，后续里程碑完善独立 fullscreen 状态。
     auto* view = W10DE_CONTAINER_OF(listener, View, requestFullscreen_);
+    const bool fs = view->toplevel()->requested.fullscreen;
     wlr_log(WLR_INFO, "fullscreen request (M2a: treating as maximize)");
-    view->setMaximized(view->toplevel()->requested.fullscreen);
+    // G2 审查：surface 未初始化（首次 commit 前）时 wlr_xdg_toplevel_
+    // set_maximized 内部 schedule_configure 断言崩溃（Qt 客户端
+    // showFullScreen 可能在首个 commit 前发 set_fullscreen）——记录待
+    // map 时应用（与 xdg-decoration 延迟设置同款防护）。
+    wlr_xdg_surface* xdg = view->toplevel()->base;
+    if (xdg != nullptr && !xdg->initialized) {
+        view->pendingFullscreen_ = fs;
+        wlr_log(WLR_INFO, "fullscreen request before surface init: deferred to map");
+        return;
+    }
+    // M5 审查（G2）：surface 已初始化路径清除 pending——覆盖"uninit 时
+    // fullscreen(true) 记 pending，init 后 map 前客户端取消全屏"的残留
+    //（否则 map 时仍消费旧 pending 错误最大化）。
+    view->pendingFullscreen_ = false;
+    view->setMaximized(fs);
 }
 
 void View::handleSetTitle(wl_listener* listener, void* /*data*/) {

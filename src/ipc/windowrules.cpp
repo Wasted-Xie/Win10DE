@@ -106,18 +106,27 @@ bool parseRuleLine(const std::string& line, WindowRule& rule) {
             rule.workspace = static_cast<int>(ws);
         } else if (a.rfind("geometry=", 0) == 0) {
             // geometry=x,y,w,h
+            // 审查 M3（G1）：严格解析——分隔符必须恰为 ','，读完 4 值后
+            // 不允许尾随内容（原实现任意单字符当逗号、尾随垃圾静默忽略）。
             int v[4] = {0, 0, 0, 0};
-            int n = 0;
-            char c;
             std::istringstream g(trim(a.substr(9)));
-            while (n < 4 && g >> v[n]) {
-                ++n;
-                g >> c;  // 逗号
-                if (g.peek() == EOF) {
-                    break;
+            for (int n = 0; n < 4; ++n) {
+                if (!(g >> v[n])) {
+                    return false;
+                }
+                if (n < 3) {
+                    char c = '\0';
+                    g >> c;
+                    if (c != ',') {
+                        return false;
+                    }
                 }
             }
-            if (n != 4 || v[2] <= 0 || v[3] <= 0) {
+            std::string rest;
+            if (g >> rest) {
+                return false;  // 尾随非空白内容
+            }
+            if (v[2] <= 0 || v[3] <= 0) {
                 return false;  // 几何不完整/非法
             }
             rule.geomX = v[0];
@@ -168,7 +177,6 @@ bool WindowRule::matches(const std::string& appId,
 
 std::vector<WindowRule> loadWindowRules(const std::string& configPath) {
     std::vector<WindowRule> rules;
-    const Config cfg = Config::load(configPath);
     // Config 无按段遍历接口——按已知键前缀读取：规则键名任意，
     // 使用 getSection? 检查 Config 接口。若无，退化：解析原始 INI。
     // 此处使用 Config::get 不适用（键名不定），直接读文件解析 [window_rules] 段。
@@ -196,8 +204,17 @@ std::vector<WindowRule> loadWindowRules(const std::string& configPath) {
             continue;  // 非法行跳过
         }
         WindowRule rule;
+        rule.name = trim(t.substr(0, eq));
         if (parseRuleLine(t.substr(eq + 1), rule)) {
-            rules.push_back(rule);
+            // 审查 L1（G1）：parseRuleLine 对空/注释值返回 true（"跳过"
+            // 语义）——过滤空匹配规则（matches() 恒 false 的垃圾行）。
+            if (!rule.matchAppId.empty() || !rule.matchTitle.empty()) {
+                rules.push_back(rule);
+            } else {
+                std::fprintf(stderr,
+                             "window_rules: 跳过空匹配规则 '%s'\n",
+                             rule.name.c_str());
+            }
         } else {
             std::fprintf(stderr,
                          "window_rules: 跳过非法规则 '%s'\n",

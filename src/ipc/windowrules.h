@@ -22,6 +22,9 @@
 namespace w10de::ipc {
 
 struct WindowRule {
+    // 规则名（config 中的键名；loadWindowRules 解析时填入）。
+    // 供设置/控制面板 UI 显示与增删改定位。
+    std::string name;
     // match：任一非空即参与匹配（* 通配子串）。
     std::string matchAppId;   // 空 = 不按 app_id 匹配
     std::string matchTitle;   // 空 = 不按 title 匹配

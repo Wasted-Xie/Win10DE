@@ -60,8 +60,13 @@ add_executable(w10settings
     settings/defaultapps.cpp
     settings/networkinfo.cpp
     settings/bluetoothinfo.cpp
+    common/monitorarrangement.cpp
+    common/ruleeditdialog.cpp
     ${CMAKE_SOURCE_DIR}/src/ipc/config.cpp
     ${CMAKE_SOURCE_DIR}/src/ipc/inputsettings.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/nightlight.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/shortcuts.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/windowrules.cpp
     ${CMAKE_SOURCE_DIR}/src/ipc/theme.cpp
     ${CMAKE_SOURCE_DIR}/src/shell/theme/colors.cpp
 )
@@ -94,6 +99,55 @@ file(WRITE "${SETTINGS_DESKTOP}"
     "StartupNotify=true\n")
 install(FILES "${SETTINGS_DESKTOP}" DESTINATION share/applications)
 install(TARGETS w10settings RUNTIME DESTINATION bin)
+
+# ---- w10control：控制面板（Win10 传统"按类别"视图，WIN10-GAP G1）----
+# 与 w10settings 共享后端（config.ini + org.w10de.Compositor D-Bus + info
+# 类），覆盖全部功能（G1 要求双入口可改所有功能）。
+add_executable(w10control
+    control/main.cpp
+    control/controlwindow.cpp
+    control/categorydialogs.cpp
+    common/monitorarrangement.cpp
+    common/ruleeditdialog.cpp
+    settings/powerinfo.cpp
+    settings/audioinfo.cpp
+    settings/defaultapps.cpp
+    settings/networkinfo.cpp
+    settings/bluetoothinfo.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/config.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/inputsettings.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/nightlight.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/shortcuts.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/windowrules.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/theme.cpp
+    ${CMAKE_SOURCE_DIR}/src/shell/theme/colors.cpp
+)
+target_include_directories(w10control PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/shell   # theme/colors.h
+)
+target_link_libraries(w10control PRIVATE
+    Qt6::Widgets
+    Qt6::DBus
+    PkgConfig::PULSE   # audioinfo（libpulse 客户端）
+    systemapps_appipc
+)
+set_target_properties(w10control PROPERTIES AUTOMOC ON)
+
+set(CONTROL_DESKTOP "${CMAKE_CURRENT_BINARY_DIR}/w10control.desktop")
+file(WRITE "${CONTROL_DESKTOP}"
+    "[Desktop Entry]\n"
+    "Type=Application\n"
+    "Name=控制面板\n"
+    "Name[en]=Control Panel\n"
+    "Comment=传统控制面板（所有系统设置）\n"
+    "Exec=w10control\n"
+    "Icon=preferences-system\n"
+    "Terminal=false\n"
+    "Categories=Settings;System;\n"
+    "StartupNotify=true\n")
+install(FILES "${CONTROL_DESKTOP}" DESTINATION share/applications)
+install(TARGETS w10control RUNTIME DESTINATION bin)
 
 # ---- w10term：终端（PTY + ANSI 渲染）----
 add_executable(w10term
@@ -130,7 +184,8 @@ file(WRITE "${TERM_DESKTOP}"
 install(FILES "${TERM_DESKTOP}" DESTINATION share/applications)
 install(TARGETS w10term RUNTIME DESTINATION bin)
 
-# ---- w10screenshot：截图工具（wlr-screencopy 协议客户端，第三批）----
+# ---- w10screenshot：截图工具（G2：区域/窗口/延时 + 交互模式）----
+# 捕获核心 capture.cpp（纯 C++，wlr-screencopy 客户端）+ Qt 交互 UI。
 set(SCREENCOPY_XML
     ${CMAKE_SOURCE_DIR}/third_party/wlroots/protocol/wlr-screencopy-unstable-v1.xml)
 set(SCREENCOPY_HDR ${CMAKE_CURRENT_BINARY_DIR}/wlr-screencopy-unstable-v1-client-protocol.h)
@@ -147,15 +202,23 @@ add_custom_command(
 
 add_executable(w10screenshot
     screenshot/main.cpp
+    screenshot/capture.cpp
+    screenshot/screenshotwindow.cpp
     ${SCREENCOPY_SRC}
     ${SCREENCOPY_HDR}   # 生成头列入依赖，避免并行构建时序竞争
 )
 target_include_directories(w10screenshot PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}
+    ${CMAKE_SOURCE_DIR}/src          # systemapps/screenshot/*.h（G2）
     ${CMAKE_SOURCE_DIR}/third_party/stb
 )
 pkg_check_modules(WAYLAND_CLIENT REQUIRED IMPORTED_TARGET wayland-client)
-target_link_libraries(w10screenshot PRIVATE PkgConfig::WAYLAND_CLIENT)
+target_link_libraries(w10screenshot PRIVATE
+    PkgConfig::WAYLAND_CLIENT
+    Qt6::Widgets
+    Qt6::DBus
+)
+set_target_properties(w10screenshot PROPERTIES AUTOMOC ON)
 install(TARGETS w10screenshot RUNTIME DESTINATION bin)
 
 set(SCREENSHOT_DESKTOP "${CMAKE_CURRENT_BINARY_DIR}/w10screenshot.desktop")
@@ -356,3 +419,77 @@ file(WRITE "${TRASH_DESKTOP}"
     "StartupNotify=true\n")
 install(FILES "${TRASH_DESKTOP}" DESTINATION share/applications)
 install(TARGETS w10trash RUNTIME DESTINATION bin)
+
+# ---- w10devices：设备管理器（WIN10-GAP G3：硬件树 + 设备详情）----
+# 数据源 sysfs/proc（无外部命令依赖）；8 类别（处理器/内存/磁盘/显卡/
+# 网络/USB/PCI/输入）。
+add_executable(w10devices
+    devices/main.cpp
+    devices/devicemodel.cpp
+    devices/deviceswindow.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/config.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/theme.cpp
+    ${CMAKE_SOURCE_DIR}/src/shell/theme/colors.cpp
+)
+target_include_directories(w10devices PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/shell   # theme/colors.h
+)
+target_link_libraries(w10devices PRIVATE
+    Qt6::Widgets
+    Qt6::DBus
+    systemapps_appipc
+)
+set_target_properties(w10devices PROPERTIES AUTOMOC ON)
+
+set(DEVICES_DESKTOP "${CMAKE_CURRENT_BINARY_DIR}/w10devices.desktop")
+file(WRITE "${DEVICES_DESKTOP}"
+    "[Desktop Entry]\n"
+    "Type=Application\n"
+    "Name=设备管理器\n"
+    "Name[en]=Device Manager\n"
+    "Comment=查看硬件设备与详情（sysfs/proc）\n"
+    "Exec=w10devices\n"
+    "Icon=preferences-system\n"
+    "Terminal=false\n"
+    "Categories=System;HardwareSettings;\n"
+    "StartupNotify=true\n")
+install(FILES "${DEVICES_DESKTOP}" DESTINATION share/applications)
+install(TARGETS w10devices RUNTIME DESTINATION bin)
+
+# ---- w10tasks：任务计划程序（WIN10-GAP G5：cron 等价 GUI + 调度守护）----
+# 双模式：GUI（w10tasks）管理任务；--daemon 常驻每分钟检查执行
+#（会话 w10-session 拉起；D-Bus org.w10de.Tasks Reload）。
+add_executable(w10tasks
+    tasks/main.cpp
+    tasks/taskstore.cpp
+    tasks/taskwindow.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/config.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/theme.cpp
+    ${CMAKE_SOURCE_DIR}/src/shell/theme/colors.cpp
+)
+target_include_directories(w10tasks PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/shell   # theme/colors.h
+)
+target_link_libraries(w10tasks PRIVATE
+    Qt6::Widgets
+    Qt6::DBus
+    systemapps_appipc
+)
+set_target_properties(w10tasks PROPERTIES AUTOMOC ON)
+
+set(TASKS_DESKTOP "${CMAKE_CURRENT_BINARY_DIR}/w10tasks.desktop")
+file(WRITE "${TASKS_DESKTOP}"
+    "[Desktop Entry]\n"
+    "Type=Application\n"
+    "Name=任务计划程序\n"
+    "Name[en]=Task Scheduler\n"
+    "Comment=创建/编辑/启停定时任务（cron 等价）\n"
+    "Exec=w10tasks\n"
+    "Icon=appointment-new\n"
+    "Terminal=false\n"
+    "Categories=System;Utility;\n"
+    "StartupNotify=true\n")
+install(FILES "${TASKS_DESKTOP}" DESTINATION share/applications)
+install(TARGETS w10tasks RUNTIME DESTINATION bin)

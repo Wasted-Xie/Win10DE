@@ -114,6 +114,10 @@ public:
     // Night Light（低优先：夜间色温）——启动/定时/新输出时应用。
     // force=true：跳过状态去重（热插拔新输出必须拿到 gamma LUT）。
     void applyNightLight(bool force = false);
+    // D-Bus SetNightLight：更新配置（写 config.ini [night_light] 段）+
+    // 热应用 + 重建每分钟检查 timer（启用时建/禁用时移除）。
+    // 返回是否成功（config 写盘失败时 false，成员不变）。
+    bool setNightLight(const w10de::ipc::NightLightConfig& cfg);
     bool nightLightActive() const { return nightLightActive_; }
     wl_event_source* nightLightTimer() const { return nightLightTimer_; }
     // 输出列表（显示设置 D-Bus 服务遍历用）。

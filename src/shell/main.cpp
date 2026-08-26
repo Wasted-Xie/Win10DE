@@ -33,6 +33,7 @@
 #include "startmenu/startmenu.h"
 #include "taskbar/startbutton.h"
 #include "taskbar/taskbarwindow.h"
+#include "taskbar/monthcalendar.h"  // G6：月历（--calendar-selftest/--calendar-render）
 #include "theme/colors.h"
 
 namespace {
@@ -70,6 +71,13 @@ int main(int argc, char* argv[]) {
     // 幻灯片调试实测：advance 后 paint 日志丢失导致误判未重绘）。
     std::setvbuf(stderr, nullptr, _IONBF, 0);
     std::setvbuf(stdout, nullptr, _IONBF, 0);
+    // G6：--calendar-selftest 需 offscreen（QApplication 构造前设置）。
+    for (int i = 1; i < argc; ++i) {
+        if (qstrcmp(argv[i], "--calendar-selftest") == 0) {
+            qputenv("QT_QPA_PLATFORM", "offscreen");
+            break;
+        }
+    }
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("w10shell"));
     app.setApplicationDisplayName(QStringLiteral("Win10DE Shell"));
@@ -98,6 +106,16 @@ int main(int argc, char* argv[]) {
     QCommandLineOption clipboardSelftestOption(QStringLiteral("clipboard-selftest"),
                                                QStringLiteral("测试：剪贴板历史逻辑自测"));
     parser.addOption(clipboardSelftestOption);
+    // G6：月历逻辑自测（offscreen）与独立渲染（--calendar-render 显示
+    // MonthCalendar 普通窗口，供 headless 截图校验）。
+    QCommandLineOption calendarSelftestOption(
+        QStringLiteral("calendar-selftest"),
+        QStringLiteral("测试：月历网格逻辑自测"));
+    parser.addOption(calendarSelftestOption);
+    QCommandLineOption calendarRenderOption(
+        QStringLiteral("calendar-render"),
+        QStringLiteral("测试：独立显示月历窗口（渲染验证）"));
+    parser.addOption(calendarRenderOption);
     parser.process(app);
 
     // 启用 layer-shell 支持（必须在使用任何 layer-shell 窗口前调用）。
@@ -152,6 +170,63 @@ int main(int argc, char* argv[]) {
               "oldest beyond cap evicted");
         qInfo("clipboard selftest: %s", ok ? "PASS" : "FAIL");
         return ok ? 0 : 1;
+    }
+
+    // ---- G6：月历逻辑自测 / 独立渲染（headless 验证）----
+    if (parser.isSet(calendarSelftestOption)) {
+        bool ok = true;
+        auto check = [&ok](bool cond, const char* what) {
+            if (!cond) {
+                ok = false;
+                qWarning("calendar selftest FAIL: %s", what);
+            }
+        };
+        // 月天数（含闰年）。
+        check(w10de::daysInMonth(2026, 2) == 28, "2026-02 = 28");
+        check(w10de::daysInMonth(2024, 2) == 29, "2024-02 leap = 29");
+        check(w10de::daysInMonth(2000, 2) == 29, "2000-02 %400 leap = 29");
+        check(w10de::daysInMonth(2026, 8) == 31, "2026-08 = 31");
+        check(w10de::daysInMonth(2026, 9) == 30, "2026-09 = 30");
+        check(w10de::daysInMonth(2026, 13) == 0, "invalid month -> 0");
+        // 2026-06-01 恰为周一 → offset=0，首格即当月 1 日。
+        const QList<QDate> june = w10de::calendarCells(2026, 6);
+        check(june.first() == QDate(2026, 6, 1), "2026-06 first cell = 6/1 (offset 0)");
+        check(w10de::calendarCells(2026, 13).isEmpty(), "invalid month -> empty");
+        // 网格：2026-08-01 是周六（2026-01-01 周四 + 212 天）→ 周一始偏移
+        // 5 → 第一格 7/27、第 5 格 8/1、第 36 格 9/1、末格 9/6。
+        const QList<QDate> cells = w10de::calendarCells(2026, 8);
+        check(cells.size() == 42, "42 cells");
+        check(cells.first() == QDate(2026, 7, 27), "first cell = 7/27");
+        check(cells.at(5) == QDate(2026, 8, 1), "8/1 at index 5");
+        check(cells.at(36) == QDate(2026, 9, 1), "9/1 at index 36");
+        check(cells.last() == QDate(2026, 9, 6), "last cell = 9/6");
+        // 连续 42 天。
+        bool contiguous = true;
+        for (int i = 1; i < cells.size(); ++i) {
+            if (cells.at(i) != cells.at(i - 1).addDays(1)) {
+                contiguous = false;
+                break;
+            }
+        }
+        check(contiguous, "cells contiguous");
+        // 每周一起始：第一列全部是周一。
+        bool firstColMonday = true;
+        for (int row = 0; row < 6; ++row) {
+            if (cells.at(row * 7).dayOfWeek() != Qt::Monday) {
+                firstColMonday = false;
+                break;
+            }
+        }
+        check(firstColMonday, "first column is Monday");
+        qInfo("calendar selftest: %s", ok ? "PASS" : "FAIL");
+        return ok ? 0 : 1;
+    }
+    if (parser.isSet(calendarRenderOption)) {
+        // 独立显示月历（普通窗口，供 headless 截图校验；非 layer-shell）。
+        w10de::MonthCalendar calendar;
+        calendar.setDate(QDate::currentDate());
+        calendar.show();
+        return QApplication::exec();
     }
 
     // ---- 桌面（background 层，全屏；不接收键盘输入）----

@@ -6,6 +6,9 @@
 #include <QHash>
 #include <QStringList>
 
+#include <vector>  // 窗口规则列表（G1）
+
+#include "ipc/windowrules.h"  // WindowRule（窗口规则页，G1）
 #include "systemapps/settings/audioinfo.h"  // SinkInfo（音频页信号参数）
 
 class QCheckBox;
@@ -17,11 +20,14 @@ class QStackedWidget;
 class QLabel;
 class QSlider;
 class QTableWidget;
+class QTimeEdit;
 class QTimer;
 
-namespace w10de::settings {
-
-class MonitorArrangementWidget;  // 显示页排列控件（cpp 中定义）
+namespace w10de {
+namespace common {
+class MonitorArrangementWidget;  // 共享排列控件（common/monitorarrangement.h）
+}
+namespace settings {
 
 class SettingsWindow : public QMainWindow {
     Q_OBJECT
@@ -49,6 +55,20 @@ private:
     // 输入设备页（第三批：鼠标/键盘/触摸板，[input] 配置 + D-Bus 热应用）
     void buildInputPage();
     void saveInputSettings();
+    // Night Light 页（G1 补全：[night_light] 配置 + D-Bus 热应用）
+    void buildNightLightPage();
+    void saveNightLight();
+    // 快捷键页（G1 补全：[shortcuts] 配置编辑）
+    void buildShortcutsPage();
+    void saveShortcuts();
+    void editShortcut(int row);
+    // 窗口规则页（G1 补全：[window_rules] 增删改）
+    void buildWindowRulesPage();
+    void refreshRulesTable();
+    void addRuleDialog();
+    void editRuleDialog(int row);
+    void removeRule(int row);
+    void saveRules();
     // 操作
     void saveTheme();
     void browseWallpaper();
@@ -108,7 +128,7 @@ private:
     int curHeight_ = 0;
     int curScalePercent_ = 100;
     // 显示器排列控件（中优先 #5；数据由控件自身持有）。
-    MonitorArrangementWidget* arrangement_ = nullptr;
+    w10de::common::MonitorArrangementWidget* arrangement_ = nullptr;
     // 电源页控件
     QLabel* batteryValue_ = nullptr;
     QLabel* backlightValue_ = nullptr;
@@ -151,6 +171,21 @@ private:
     QSlider* repeatDelaySlider_ = nullptr;
     QLabel* repeatDelayValue_ = nullptr;
     QLabel* inputStatus_ = nullptr;
+    // Night Light 页控件（G1）
+    QCheckBox* nightEnabledCheck_ = nullptr;
+    QSlider* nightTempSlider_ = nullptr;
+    QLabel* nightTempValue_ = nullptr;
+    QTimeEdit* nightStartEdit_ = nullptr;
+    QTimeEdit* nightEndEdit_ = nullptr;
+    QLabel* nightStatus_ = nullptr;
+    // 快捷键页控件（G1）
+    QTableWidget* shortcutTable_ = nullptr;
+    QLabel* shortcutsStatus_ = nullptr;
+    // 窗口规则页控件（G1；规则列表为值类型，编辑时副本修改）
+    QTableWidget* rulesTable_ = nullptr;
+    QLabel* rulesStatus_ = nullptr;
+    std::vector<w10de::ipc::WindowRule> rules_;
 };
 
-}  // namespace w10de::settings
+}  // namespace settings
+}  // namespace w10de

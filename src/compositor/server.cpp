@@ -2,6 +2,7 @@
 #include "compositor/util.h"
 
 #include <algorithm>
+#include <cstdio>    // snprintf（SetNightLight 时间写盘）
 #include <cstdlib>  // free / getenv / strcmp
 #include <ctime>     // Night Light 时间窗（localtime_r）
 #include <vector>    // Night Light gamma 表
@@ -421,6 +422,51 @@ void Compositor::applyNightLight(bool force) {
         }
         wlr_output_state_finish(&state);
     }
+}
+
+bool Compositor::setNightLight(const w10de::ipc::NightLightConfig& cfg) {
+    // 审查 L7（G1）：方法内复校验（D-Bus 层已校验；防御未来新增调用方
+    // 绕过 D-Bus 写出非法时间窗）。
+    if (cfg.temperature < 1000 || cfg.temperature > 8000 ||
+            cfg.startMinutes < 0 || cfg.startMinutes > 1439 ||
+            cfg.endMinutes < 0 || cfg.endMinutes > 1439 ||
+            cfg.startMinutes == cfg.endMinutes) {
+        wlr_log(WLR_ERROR, "setNightLight: invalid config rejected");
+        return false;
+    }
+    // 写盘 config.ini [night_light] 段（设置/控制面板热应用入口）。
+    w10de::Config config = w10de::Config::load(options_.configPath);
+    config.set("night_light", "enabled", cfg.enabled ? "1" : "0");
+    config.set("night_light", "temperature", std::to_string(cfg.temperature));
+    char startBuf[6] = {0}, endBuf[6] = {0};
+    std::snprintf(startBuf, sizeof startBuf, "%02d:%02d",
+                  cfg.startMinutes / 60, cfg.startMinutes % 60);
+    std::snprintf(endBuf, sizeof endBuf, "%02d:%02d",
+                  cfg.endMinutes / 60, cfg.endMinutes % 60);
+    config.set("night_light", "start_time", startBuf);
+    config.set("night_light", "end_time", endBuf);
+    if (!config.save(options_.configPath)) {
+        wlr_log(WLR_ERROR, "setNightLight: config save failed");
+        return false;
+    }
+    nightLight_ = cfg;
+    // timer 重建：启用建（每分钟检查），禁用移除。
+    if (cfg.enabled && nightLightTimer_ == nullptr) {
+        nightLightTimer_ = wl_event_loop_add_timer(
+            wl_display_get_event_loop(display_), nightLightTimerCallback, this);
+        if (nightLightTimer_ != nullptr) {
+            wl_event_source_timer_update(nightLightTimer_, 60 * 1000);
+        }
+    } else if (!cfg.enabled && nightLightTimer_ != nullptr) {
+        wl_event_source_remove(nightLightTimer_);
+        nightLightTimer_ = nullptr;
+    }
+    applyNightLight(true);  // force：立即按新配置应用（含新启用的输出）
+    wlr_log(WLR_INFO, "setNightLight: enabled=%d temp=%dK window=%02d:%02d-%02d:%02d",
+            cfg.enabled ? 1 : 0, cfg.temperature,
+            cfg.startMinutes / 60, cfg.startMinutes % 60,
+            cfg.endMinutes / 60, cfg.endMinutes % 60);
+    return true;
 }
 
 int Compositor::run() {    const char* socket = nullptr;

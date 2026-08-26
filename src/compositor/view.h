@@ -188,6 +188,9 @@ private:
     struct wlr_scene_buffer* contentBuffer_ = nullptr;
     // M8 验证：map 后自动贴左半屏（--snap-test，每个窗口生效）。
     bool snapOnMap_ = false;
+    // G2 审查：surface 未初始化时到达的 fullscreen 请求（首次 commit 前），
+    // map 时应用（wlr schedule_configure 断言防护）。
+    bool pendingFullscreen_ = false;
     // 窗口规则标志（KDE-GAP 中优先 #6：applyRules 设置）。
     bool alwaysOnTop_ = false;
     bool borderless_ = false;

@@ -4,6 +4,8 @@
 #include "compositor/seat.h"
 #include "compositor/server.h"
 #include "compositor/util.h"
+#include "compositor/view.h"
+#include "compositor/xview.h"
 
 #include <wlr/util/log.h>
 
@@ -11,6 +13,7 @@
 #include <cstring>
 
 #include "ipc/inputsettings.h"
+#include "ipc/nightlight.h"
 
 namespace w10de {
 
@@ -247,6 +250,51 @@ bool CompositorDbus::handleMethod(const char* method, DBusMessage* message,
         dbus_message_iter_close_container(&root, &arr);
         return true;
     }
+    if (std::strcmp(method, "GetViews") == 0) {
+        // G2：窗口列表（截图工具 --window 用）：a(ssiiii) =
+        // (app_id, title, x, y, w, h)。仅已映射窗口（跨全部工作区，
+        // 由截图工具按需选择）。
+        *reply = dbus_message_new_method_return(message);
+        DBusMessageIter root;
+        dbus_message_iter_init_append(*reply, &root);
+        DBusMessageIter arr;
+        dbus_message_iter_open_container(&root, DBUS_TYPE_ARRAY,
+                                         "(ssiiii)", &arr);
+        const auto appendView = [&arr](const char* appId, const char* title,
+                                       int x, int y, int w, int h) {
+            DBusMessageIter st;
+            dbus_message_iter_open_container(&arr, DBUS_TYPE_STRUCT, nullptr,
+                                             &st);
+            const char* a = appId != nullptr ? appId : "";
+            const char* t = title != nullptr ? title : "";
+            int32_t xi = x, yi = y, wi = w, hi = h;
+            dbus_message_iter_append_basic(&st, DBUS_TYPE_STRING, &a);
+            dbus_message_iter_append_basic(&st, DBUS_TYPE_STRING, &t);
+            dbus_message_iter_append_basic(&st, DBUS_TYPE_INT32, &xi);
+            dbus_message_iter_append_basic(&st, DBUS_TYPE_INT32, &yi);
+            dbus_message_iter_append_basic(&st, DBUS_TYPE_INT32, &wi);
+            dbus_message_iter_append_basic(&st, DBUS_TYPE_INT32, &hi);
+            dbus_message_iter_close_container(&arr, &st);
+        };
+        for (const View* v : compositor_.views()) {
+            if (!v->mapped()) {
+                continue;
+            }
+            appendView(v->appId(), v->title(), v->x(), v->y(), v->width(),
+                       v->height());
+        }
+        for (const XView* v : compositor_.xviews()) {
+            if (!v->mapped()) {
+                continue;
+            }
+            // XView 无 app_id 访问器（X11 class 处理见 xview.cpp）——
+            // 统一给空串，匹配可用 title。
+            appendView("", v->title(), v->x(), v->y(), v->width(),
+                       v->height());
+        }
+        dbus_message_iter_close_container(&root, &arr);
+        return true;
+    }
     if (std::strcmp(method, "GetModes") == 0) {
         const char* name = nullptr;
         if (!nextString(args, &name)) {
@@ -388,6 +436,32 @@ bool CompositorDbus::handleMethod(const char* method, DBusMessage* message,
         wlr_output_layout_add(compositor_.outputLayout(), output, x, y);
         compositor_.arrangeLayers();
         wlr_log(WLR_INFO, "dbus: SetPosition '%s' (%d,%d)", name, x, y);
+        *reply = dbus_message_new_method_return(message);
+        return true;
+    }
+    if (std::strcmp(method, "SetNightLight") == 0) {
+        // G1：Night Light 热应用（参数 b:i:i:i = enabled, temp, start, end）。
+        bool enabled = false;
+        int32_t temperature = 0, startMinutes = 0, endMinutes = 0;
+        if (!nextBool(args, &enabled) || !nextInt32(args, &temperature) ||
+                !nextInt32(args, &startMinutes) || !nextInt32(args, &endMinutes) ||
+                temperature < 1000 || temperature > 8000 ||
+                startMinutes < 0 || startMinutes > 1439 ||
+                endMinutes < 0 || endMinutes > 1439 ||
+                startMinutes == endMinutes) {
+            // 审查 M2（G1）：start==end 拒绝——热应用 isNightActive 会恒真
+            // （全天），而启动加载 loadNightLightConfig 对 start==end 回退
+            // 默认 18:00-06:00，两者语义漂移。
+            return false;
+        }
+        w10de::ipc::NightLightConfig cfg;
+        cfg.enabled = enabled;
+        cfg.temperature = temperature;
+        cfg.startMinutes = startMinutes;
+        cfg.endMinutes = endMinutes;
+        if (!compositor_.setNightLight(cfg)) {
+            return false;  // config 写盘失败 → 错误返回
+        }
         *reply = dbus_message_new_method_return(message);
         return true;
     }

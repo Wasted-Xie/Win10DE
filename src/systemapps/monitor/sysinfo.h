@@ -57,6 +57,9 @@ struct ProcInfo {
     std::string cmdline;  // 完整命令行（空格连接；内核线程用 name）
     double cpuPercent = 0.0;  // 相对单核使用率（两次采样增量）
     unsigned long long rssKB = 0;
+    // G4：每进程磁盘 IO（/proc/<pid>/io read_bytes/write_bytes 增量，KB/s）。
+    double ioReadKBps = 0.0;
+    double ioWriteKBps = 0.0;
 };
 
 class SysInfo {
@@ -86,6 +89,17 @@ public:
         return cpuPerCoreHistory_;
     }
     static constexpr int kHistory = 60;
+    // G4：内存/磁盘/网络滚动历史（曲线；磁盘与网络为速率）。
+    const std::vector<double>& memHistory() const { return memHistory_; }
+    const std::vector<double>& diskReadHistory() const { return diskReadHistory_; }
+    const std::vector<double>& diskWriteHistory() const { return diskWriteHistory_; }
+    const std::vector<double>& netRxHistory() const { return netRxHistory_; }
+    const std::vector<double>& netTxHistory() const { return netTxHistory_; }
+    // G4：累计总量（磁盘读写 / 网络收发的原始累计字节）。
+    unsigned long long diskReadTotalBytes() const { return diskReadTotalBytes_; }
+    unsigned long long diskWriteTotalBytes() const { return diskWriteTotalBytes_; }
+    unsigned long long netRxTotalBytes() const { return netRxTotalBytes_; }
+    unsigned long long netTxTotalBytes() const { return netTxTotalBytes_; }
 
     // ---- 进程管理（KDE-GAP #2）----
     // 采样进程列表（CPU% 为相对上次 sample() 的增量；首次为 0）。
@@ -106,6 +120,9 @@ private:
                                        const std::string& preferred = {});
     static DiskCounters readDiskCounters(std::string* device,
                                          const std::string& preferred = {});
+    // G4：/proc/<pid>/io 的 read_bytes/write_bytes（真实磁盘 IO）。
+    static bool readProcIo(int pid, unsigned long long* readBytes,
+                           unsigned long long* writeBytes);
 
     static double ratePerSec(unsigned long long cur, unsigned long long prev,
                              long long dtMs);
@@ -122,6 +139,12 @@ private:
     std::vector<double> cpuPerCore_;
     std::vector<double> cpuTotalHistory_;
     std::vector<std::vector<double>> cpuPerCoreHistory_;
+    // G4：内存/磁盘/网络历史 + 累计总量。
+    std::vector<double> memHistory_;
+    std::vector<double> diskReadHistory_, diskWriteHistory_;
+    std::vector<double> netRxHistory_, netTxHistory_;
+    unsigned long long diskReadTotalBytes_ = 0, diskWriteTotalBytes_ = 0;
+    unsigned long long netRxTotalBytes_ = 0, netTxTotalBytes_ = 0;
     MemStats mem_{};
     double netRxKBps_ = 0.0, netTxKBps_ = 0.0;
     double diskReadMBps_ = 0.0, diskWriteMBps_ = 0.0;
@@ -129,6 +152,12 @@ private:
     // 进程 CPU 增量缓存（pid → utime+stime；进程退出自动失效）。
     std::map<int, unsigned long long> prevProcCpu_;
     unsigned long long prevCpuTotalTicks_ = 0;  // 上次总 CPU ticks（进程%计算）
+    // G4：进程 IO 增量缓存（pid → read_bytes/write_bytes）。
+    std::map<int, std::pair<unsigned long long, unsigned long long>> prevProcIo_;
+    // G4 审查 M1：上次 processList() 的 IO 采样时间（IO 增量窗口必须用
+    // processList 自身的时间差——sample() 的 prevTimeMs_ 在 UI 流程中
+    // 先被 sample() 重写，dt 会缩成毫秒级导致 IO 速率放大）。
+    long long prevProcIoTimeMs_ = 0;
 };
 
 }  // namespace w10de::monitor

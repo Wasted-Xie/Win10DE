@@ -69,6 +69,11 @@ Linux 上的 Windows 10 风格桌面环境，从零实现。
 - [x] **w10settings 设置中心**（参考 KDE System Settings：顶部搜索 + 左侧分类 + 右侧模块）：
       外观（主题深浅色/壁纸路径，写 config.ini）、系统（关于/开机自启开关）；Config 扩展
       写入（保留注释与顺序）；`--selftest` 配置读写 + headless 渲染 + 单实例验证通过（2026-08）
+      （WIN10-GAP G1 补全 3 页：Night Light 热应用/快捷键编辑/窗口规则增删改）
+- [x] **w10control 控制面板**（WIN10-GAP G1，2026-08）：Win10 传统"按类别"视图（主页自绘
+      图标网格 6 类别 + 搜索过滤）+ 模态对话框（应用/确定/取消）；与 w10settings 共享
+      config.ini + org.w10de.Compositor D-Bus，覆盖全部功能（矩阵见 docs/WIN10-GAP.md）；
+      `--selftest` + headless 渲染 + 单实例验证通过
 - [ ] **功能补全（goal cd47bf3e，对标 KDE 差距分析）**：第一批 Alt+Tab 切换器 ✅、全局搜索 ✅
       （开始菜单顶部搜索框：应用过滤 + 主目录文件搜索混合结果、文件系统默认打开、磁贴区隐藏；
       渲染验证 PASS）、**通知中心 ✅**（`org.freedesktop.Notifications` 标准 D-Bus 服务 + 右下角
@@ -338,12 +343,71 @@ Linux 上的 Windows 10 风格桌面环境，从零实现。
         支持；默认应用 O2——新增"查看器"类别（image/*、pdf、
         text/plain）；全部经编译 + selftest PASS；W1 壁纸闪烁（上游
         LayerShellQt 限制）/O3 跨设备回收站/O4 激活置前 评估保留记录）
+        ——**WIN10-GAP G1 控制面板 ✅**（新建 `w10control` 传统控制面板：
+        主页"按类别"图标网格（自绘图标）+ 6 个模态对话框（系统和安全/
+        外观和个性化/硬件和声音[显示·音频·蓝牙·输入 QTabWidget]/网络和
+        Internet/程序/时钟和区域），底部 应用/确定/取消；`w10settings` 补全
+        3 页（Night Light 热应用、快捷键、窗口规则增删改）；**双入口共享
+        后端**（config.ini + org.w10de.Compositor D-Bus + info 类）覆盖同一
+        功能全集（功能矩阵见 docs/WIN10-GAP.md 1.1）；compositor 新增
+        SetNightLight(b,i,i,i) D-Bus 热应用（写 config + gamma 应用 + 重建
+        每分钟 timer）；提取共享组件 common/monitorarrangement（排列控件双
+        应用共用）；Config 新增 remove/sectionKeys + WindowRule.name；
+        验证：双应用 selftest PASS（Config remove/sectionKeys/规则名/快捷键
+        解析/6 对话框构建）+ headless 渲染像素 4/4 + SetNightLight D-Bus
+        端到端 PASS（config 写入 + 日志 setNightLight 4500K 21:00-06:00）；
+        子代理审查 S 级问题全修复）——**G1 完成** → **WIN10-GAP G2 截图
+        工具补全 ✅**（`w10screenshot` 升级 Qt 应用：交互模式（全屏遮罩 +
+        工具条 全屏/区域拖选/窗口选择/延时 5 秒 + Esc 取消）+ CLI
+        （--fullscreen/--region X,Y,W,H/--window MATCH/--delay N/--output/
+        --out）；compositor 新增 GetViews D-Bus（a(ssiiii) 窗口列表）；
+        捕获核心提取 capture.{h,cpp}（区域裁剪/错误路径）；--output 精确
+        匹配修复（registry bind 初始事件需第二次 roundtrip）；compositor
+        fullscreen 未初始化断言修复（pendingFullscreen_ 延迟 map 应用）；
+        保存 ~/Pictures/Screenshots/w10shot-时间戳.png；验证：selftest 3 项
+        PASS + headless 捕获 4/4（全屏/窗口 860x592/区域 400x300/延时）+
+        交互遮罩渲染 PASS；审查修复见 docs/WIN10-GAP.md 1.2）——**G2 完成**
+        → **WIN10-GAP G3 设备管理器 ✅**（新建 `w10devices`：左硬件树 8 类别
+        （处理器/内存/磁盘/显卡/网络/USB/PCI/输入，自绘图标 + 状态列）+ 右
+        属性表；sysfs/proc 数据源（无外部命令）；稳定匹配键（key 字段）定位
+        重名设备；虚拟盘过滤（loop/ram/zram/dm 隐藏）；ARM CPU 降级 fallback；
+        无设备类别占位；selftest 6 项 PASS（WSL 实测 i7-14650HX/7.6GB/磁盘 4/
+        PCI 4/GPU-USB-输入降级）+ headless 渲染 PASS；子代理审查 M1/M2/M3/M5
+        全修复（ARM 降级/虚拟盘过滤/重名定位/断言放宽），见 docs/WIN10-GAP.md
+        1.3）——**G3 完成** → **WIN10-GAP G4 性能监视器补全 ✅**
+        （`w10monitor` 性能页 4 图：CPU/内存/磁盘读写（双序列读蓝写绿）/
+        网络收发（双序列），60 点滚动 + 峰值自适应；磁盘/网络详情加累计
+        总量（内核字节 KB/MB/GB）；进程页 6 列加每进程磁盘 IO（读/写 KB/s，
+        /proc/pid/io 增量，无权限显示 -）；SysInfo 扩展历史/累计/每进程 IO
+        （prevProcIo_ 缓存随进程清理）；selftest 扩展（G4 历史/累计/IO 字段）
+        PASS（24 核/内存 10.6%/磁盘 sdd/网络 eth0）+ 渲染 PASS（4 图：蓝曲线
+        1311/绿双序列 36/深底 75581）；已知简化：每进程网络明细未做（需
+        eBPF/nethogs），见 docs/WIN10-GAP.md 1.4）——**G4 完成** → **WIN10-GAP
+        G5 任务计划程序 ✅**（新建 `w10tasks`：GUI（任务列表 + 新建/编辑/
+        删除/启用禁用/立即运行，触发器模板：每分钟/每小时/每天/每周/每月/
+        自定义 cron 字段）+ `--daemon` 调度守护（每分钟 tick，cron 风格
+        匹配 dom+dow 任一语义，命中执行 + last_run/last_result 写回，同
+        分钟去重）；配置 ~/.config/w10de/tasks.ini；D-Bus org.w10de.Tasks
+        Reload（registerObject 接口名重载）；验证：selftest 3 项（调度匹配
+        表驱动/配置往返/触发器文本）PASS + 守护端到端 PASS（65 秒实测：
+        touch 证明 + last_result=OK）+ D-Bus Reload method return PASS +
+        GUI 渲染 PASS；已知简化：分钟级调度/无下次运行预览，见
+        docs/WIN10-GAP.md 1.5）——**G5 完成** → **WIN10-GAP G6 日历 ✅**
+        （任务栏时钟（Clock）点击 → 弹出月历 MonthCalendar：标题 ◀yyyy 年
+        M 月▶ 翻月 + 星期表头（周一起始）+ 6×7 网格（当月白/非当月灰/今天
+        蓝圆高亮/悬停）+ 底部今天行；Qt::Popup 点击外部关闭；纯逻辑
+        calendarCells/daysInMonth；验证：--calendar-selftest PASS（月天数
+        闰年/42 格/2026-08-01 索引 5/首列周一/连续）+ --calendar-render
+        渲染 PASS（今天蓝圆 3444/面板 17692）+ w10shell 完整渲染回归无破坏；
+        已知简化：无事件/农历，见 docs/WIN10-GAP.md 1.6）——**G6 完成，
+        WIN10-GAP 6 项全部 ✅**
 - [x] 编译与冒烟验证（headless 运行 + 截图 + 像素校验，2026-08 Arch/WSL2 通过）
 - [x] 完整渲染验证（compositor + w10shell 同跑：桌面壁纸渐变 + 任务栏渲染成功，2026-08）
 - [ ] 真机/嵌套环境验证（DRM、XWayland 运行时、鼠标键盘实际交互）
 
 详见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)；
-未修复项/已知简化清单见 [docs/UNFIXED.md](docs/UNFIXED.md)。
+未修复项/已知简化清单见 [docs/UNFIXED.md](docs/UNFIXED.md)；
+与 Windows 对照的系统应用差距清单见 [docs/WIN10-GAP.md](docs/WIN10-GAP.md)（G1 控制面板/G2 截图/G3 设备管理器/G4 性能监视器/G5 任务计划程序/G6 日历）。
 
 ## 目录结构
 

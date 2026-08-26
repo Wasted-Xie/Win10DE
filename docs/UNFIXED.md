@@ -55,23 +55,23 @@
 
 ### 2.4 壁纸幻灯片
 
-| # | 问题 | 级别 | 修复建议 |
-|---|------|------|----------|
-| W1 | LayerShellQt 下 Qt 增量 paint 调度失效（update/repaint/requestUpdate/resize 均不触发 surface 提交），轮换用 hide/show 强制重绘 | L | 真机可能闪烁；需 layer-shell Qt 渲染路径排查（上游问题） |
+| # | 问题 | 级别 | 状态 |
+|---|------|------|------|
+| W1 | LayerShellQt 下 Qt 增量 paint 调度失效（update/repaint/requestUpdate/resize 均不触发 surface 提交），轮换用 hide/show 强制重绘 | L | 🔒 保留记录：上游（layer-shell Qt 渲染路径）问题，真机排查；已知真机可能闪烁 |
 
 ### 2.5 输入设备设置
 
-| # | 问题 | 级别 | 修复建议 |
-|---|------|------|----------|
-| I1 | headless 无真实设备，libinput 热插拔应用路径（handleNewInput → applyPointerSettings）未真机验证 | 真机项 | 真机插拔鼠标/触摸板验证 |
-| I2 | natural_scroll 同时影响鼠标滚轮（libinput 语义），与 Windows 仅触摸板反向的预期有差异 | R | 文档记录；如需细分需按设备类型过滤 |
-| I3 | `[input]` 仅 libinput 后端可配置（wayland 嵌套/headless 降级为保存） | R | 文档记录 |
+| # | 问题 | 级别 | 状态 |
+|---|------|------|------|
+| I1 | headless 无真实设备，libinput 热插拔应用路径（handleNewInput → applyPointerSettings）未真机验证 | 真机项 | 🔒 真机验证项：真机插拔鼠标/触摸板验证（代码路径已就绪） |
+| I2 | natural_scroll 同时影响鼠标滚轮（libinput 语义），与 Windows 仅触摸板反向的预期有差异 | R | 🔒 保留记录：需按设备类型过滤才能细分，MVP 接受 |
+| I3 | `[input]` 仅 libinput 后端可配置（wayland 嵌套/headless 降级为保存） | R | 🔒 保留记录：非 libinput 后端无配置接口，属环境限制 |
 
 ### 2.6 锁屏（w10lock + PAM）
 
-| # | 问题 | 级别 | 修复建议 |
-|---|------|------|----------|
-| L1 | fail-closed：非 root 时 PAM 不可用 → 提示"验证服务不可用"且不提供任意键解锁，唯一出口为系统控制台/会话重启 | R | 真机建议 setuid root 安装 w10lock 或专用 /etc/pam.d/w10lock 服务 |
+| # | 问题 | 级别 | 状态 |
+|---|------|------|------|
+| L1 | fail-closed：非 root 时 PAM 不可用 → 提示"验证服务不可用"且不提供任意键解锁，唯一出口为系统控制台/会话重启 | R | 🔒 保留记录（安全设计）：真机建议 setuid root 安装 w10lock 或专用 /etc/pam.d/w10lock 服务 |
 
 ### 2.7 其他
 
@@ -79,9 +79,9 @@
 |---|------|------|------|------|
 | O1 | w10term | ANSI 追加模式无光标移动（简化），部分 TUI（vim/htop 全屏）显示异常 | L | ✅ 已修：CSI A/B/C/D 光标移动 + H/f 定位 + 备用屏（?1049h/l）——进入"定位模式"在光标处插入；TUI 最小支持（无滚动区）。**已知限制**：定位模式换行无 CR（光标留原列）；备用屏退出 clear() 丢主屏回显（vim 退出后终端空白）；参数化 CSI（[3A）忽略参数只移 1 格 |
 | O2 | 默认应用 | 仅管理 3 类（浏览器/邮件/文件管理器），查看器/终端等类型未入设置页 | L | ✅ 已修：新增"查看器"类别（image/*、application/pdf、text/plain → w10viewer.desktop）；终端无标准 mime 未加 |
-| O3 | 每应用音量 | 滑块拖动→音量变化为真机交互验证项；sink-input 无 Pulse 事件订阅，流增删需手动刷新 | 真机项 | 保留：真机验证；事件订阅可后加 |
-| O3 | w10explorer | 删除进回收站仅主回收站，系统分区顶层回收站（/.Trash-<uid>）与跨设备删除不支持（QFile::rename EXDEV 不上报成功） | R | 保留：跨设备安全失败（不上报成功）为保守行为；.Trash-uid 需分区检测，MVP 不做 |
-| O4 | 窗口 | Alt+Tab/任务栏对 Wayland 激活置前（activateWindow）受 xdg-activation token 限制，部分场景无法真置前 | R | 保留：需 compositor 实现 xdg-activation-v1 + shell 请求 token，工程量大 |
+| O3 | 每应用音量 | 滑块拖动→音量变化为真机交互验证项；sink-input 无 Pulse 事件订阅，流增删需手动刷新 | 真机项 | 🔒 真机验证项：事件订阅可后加 |
+| O4 | w10explorer | 删除进回收站仅主回收站，系统分区顶层回收站（/.Trash-<uid>）与跨设备删除不支持（QFile::rename EXDEV 不上报成功） | R | 🔒 保留记录：跨设备安全失败（不上报成功）为保守行为；.Trash-uid 需分区检测，MVP 不做 |
+| O5 | 窗口 | Alt+Tab/任务栏对 Wayland 激活置前（activateWindow）受 xdg-activation token 限制，部分场景无法真置前 | R | 🔒 保留记录：需 compositor 实现 xdg-activation-v1 + shell 请求 token，工程量大 |
 
 ---
 

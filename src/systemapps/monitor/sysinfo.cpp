@@ -12,6 +12,7 @@
 #include <csignal>
 #include <dirent.h>
 #include <iterator>
+#include <set>
 #include <unistd.h>
 
 namespace w10de::monitor {
@@ -340,6 +341,12 @@ void SysInfo::sample() {
     // ---- 内存 ----
     mem_ = readMemStats();
 
+    // G4：内存历史（使用率 %）。
+    memHistory_.push_back(mem_.usedPercent());
+    if (static_cast<int>(memHistory_.size()) > kHistory) {
+        memHistory_.erase(memHistory_.begin());
+    }
+
     // ---- 网络 / 磁盘（速率；审查 M3：preferred = 上次选中，对象稳定）----
     NetCounters net = readNetCounters(&netInterface_, netInterface_);
     DiskCounters disk = readDiskCounters(&diskDevice_, diskDevice_);
@@ -356,6 +363,31 @@ void SysInfo::sample() {
     }
     prevNet_ = net;
     prevDisk_ = disk;
+
+    // G4：累计总量（当前采样值即内核累计）。
+    // 审查 L1：读取失败（read* 返回全 0）时沿用上次累计——单调性守卫
+    // （0 >= prev 恒假当 prev>0；真 0 累计的新设备 prev 也为 0 可更新）。
+    if (disk.readBytes + disk.writeBytes
+            >= prevDisk_.readBytes + prevDisk_.writeBytes) {
+        diskReadTotalBytes_ = disk.readBytes;
+        diskWriteTotalBytes_ = disk.writeBytes;
+    }
+    if (net.rx + net.tx >= prevNet_.rx + prevNet_.tx) {
+        netRxTotalBytes_ = net.rx;
+        netTxTotalBytes_ = net.tx;
+    }
+
+    // G4：磁盘/网络速率历史（滚动）。
+    diskReadHistory_.push_back(diskReadMBps_);
+    diskWriteHistory_.push_back(diskWriteMBps_);
+    netRxHistory_.push_back(netRxKBps_);
+    netTxHistory_.push_back(netTxKBps_);
+    for (auto* h : {&diskReadHistory_, &diskWriteHistory_,
+                    &netRxHistory_, &netTxHistory_}) {
+        if (static_cast<int>(h->size()) > kHistory) {
+            h->erase(h->begin());
+        }
+    }
     first_ = false;
 }
 
@@ -432,8 +464,53 @@ std::string readCmdline(int pid) {
 
 }  // namespace
 
+// G4：/proc/<pid>/io 解析（read_bytes/write_bytes；无权限/已退出返回 false）。
+bool SysInfo::readProcIo(int pid, unsigned long long* readBytes,
+                         unsigned long long* writeBytes) {
+    std::ifstream f("/proc/" + std::to_string(pid) + "/io");
+    if (!f) {
+        return false;
+    }
+    std::string line;
+    bool gotRead = false, gotWrite = false;
+    while (std::getline(f, line)) {
+        if (!gotRead) {
+            const unsigned long long v = parseField(line, "read_bytes:");
+            if (v > 0 || line.rfind("read_bytes:", 0) == 0) {
+                *readBytes = v;
+                gotRead = true;
+                continue;
+            }
+        }
+        if (!gotWrite) {
+            const unsigned long long v = parseField(line, "write_bytes:");
+            if (v > 0 || line.rfind("write_bytes:", 0) == 0) {
+                *writeBytes = v;
+                gotWrite = true;
+            }
+        }
+        if (gotRead && gotWrite) {
+            break;
+        }
+    }
+    return gotRead && gotWrite;
+}
+
 std::vector<ProcInfo> SysInfo::processList() {
     std::vector<ProcInfo> out;
+
+    // G4 审查 M1：IO 增量窗口 = 距上次 processList() 的毫秒（自维护
+    // prevProcIoTimeMs_；不能用 sample() 的 prevTimeMs_——UI 流程中
+    // sample() 先执行会重写它，dt 缩成毫秒级放大 IO 速率）。
+    const long long now = nowMs();
+    long long dt = 1000;
+    if (prevProcIoTimeMs_ > 0 && now > prevProcIoTimeMs_) {
+        dt = now - prevProcIoTimeMs_;
+    }
+    if (dt < 1) {
+        dt = 1;
+    }
+    prevProcIoTimeMs_ = now;
 
     // 总 CPU ticks（相对进程% 基准：100 * dproc / dtotal * coreCount）。
     const CpuCounters total = readCpuTotal();
@@ -476,18 +553,51 @@ std::vector<ProcInfo> SysInfo::processList() {
                               static_cast<double>(dTotal) * coreCount_;
         }
         prevProcCpu_[pid] = cpuTicks;
+
+        // G4：每进程磁盘 IO（read_bytes/write_bytes 增量 → KB/s）。
+        unsigned long long ioRead = 0, ioWrite = 0;
+        if (readProcIo(pid, &ioRead, &ioWrite)) {
+            const auto prevIo = prevProcIo_.find(pid);
+            if (prevIo != prevProcIo_.end()) {
+                const unsigned long long dRead =
+                    ioRead >= prevIo->second.first
+                        ? ioRead - prevIo->second.first : 0;
+                const unsigned long long dWrite =
+                    ioWrite >= prevIo->second.second
+                        ? ioWrite - prevIo->second.second : 0;
+                // dt 为上次 sample() 到本次的毫秒（进程 CPU 增量同窗口）。
+                if (dt > 0) {
+                    info.ioReadKBps = static_cast<double>(dRead) / 1024.0
+                        * 1000.0 / dt;
+                    info.ioWriteKBps = static_cast<double>(dWrite) / 1024.0
+                        * 1000.0 / dt;
+                }
+            }
+            prevProcIo_[pid] = {ioRead, ioWrite};
+        }
+
         out.push_back(std::move(info));
     }
     closedir(dir);
 
-    // 审查 M1：清理已退出进程的缓存（防止 map 随 pid 重用无限增长）。
+    // 审查 M1/L2：清理已退出进程的缓存（先建存活 pid 集合再 O(P) 清理，
+    // 避免原线性扫描 O(P²)——上千进程时每帧数百万次比较）。
+    std::set<int> alivePids;
+    for (const ProcInfo& p : out) {
+        alivePids.insert(p.pid);
+    }
     for (auto it = prevProcCpu_.begin(); it != prevProcCpu_.end();) {
-        if (std::find_if(out.begin(), out.end(), [&](const ProcInfo& p) {
-                return p.pid == it->first;
-            }) == out.end()) {
-            it = prevProcCpu_.erase(it);
-        } else {
+        if (alivePids.count(it->first) != 0) {
             ++it;
+        } else {
+            it = prevProcCpu_.erase(it);
+        }
+    }
+    for (auto it = prevProcIo_.begin(); it != prevProcIo_.end();) {
+        if (alivePids.count(it->first) != 0) {
+            ++it;
+        } else {
+            it = prevProcIo_.erase(it);
         }
     }
 

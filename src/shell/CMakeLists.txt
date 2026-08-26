@@ -35,6 +35,7 @@ add_executable(w10shell
     taskbar/clock.cpp
     taskbar/startbutton.cpp
     taskbar/taskbarbutton.cpp
+    taskbar/monthcalendar.cpp   # G6：任务栏时钟点击弹出的月历
     startmenu/appmodel.cpp
     startmenu/startmenu.cpp
     startmenu/tilebutton.cpp

@@ -7,6 +7,7 @@
 #pragma once
 
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -26,8 +27,15 @@ public:
     // 设置 section.key（内存中；save 前不落盘）。
     void set(const std::string& section, const std::string& key,
              const std::string& value);
+    // 删除 section.key（内存中；save 时该键的原行一并移除）。
+    // 键不存在时无操作。供窗口规则页删除规则用。
+    void remove(const std::string& section, const std::string& key);
+    // 该 section 下的全部键名（不含 section 前缀；按 map 序，即键名字典序）。
+    // 供窗口规则页枚举段内规则用。
+    std::vector<std::string> sectionKeys(const std::string& section) const;
     // 写回文件：保留原始注释/空行/顺序，替换已存在的键，追加缺失的键
-    // 到对应 section（section 缺失则新建）。返回是否成功。
+    // 到对应 section（section 缺失则新建）；被 remove 的键原行删除。
+    // 返回是否成功。
     bool save(const std::string& path) const;
 
 private:
@@ -35,6 +43,11 @@ private:
     std::map<std::string, std::string> values_;
     // 原始行（load 时记录，save 时保序输出）。
     std::vector<std::string> rows_;
+    // 本次会话中被 remove 的键（save 时跳过对应原行）。
+    std::set<std::string> removedKeys_;
+    // load 时解析出的全部键（"section.key"）。save 时用于区分"修改既有键"
+    // （行内原位替换）与"新增键"（段头后插入，审查 M1）。
+    std::set<std::string> originalKeys_;
 };
 
 }  // namespace w10de
