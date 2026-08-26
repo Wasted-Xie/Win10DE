@@ -327,7 +327,17 @@ Linux 上的 Windows 10 风格桌面环境，从零实现。
         （Night Light + KWin 打开/还原淡入 ✅；全局菜单/KWallet/
         登录管理器/KWin 其余特效经评估为 MVP 不做——依赖客户端
         DBusMenu/无消费方/系统层超范围/脚本框架工程量，理由见
-        docs/UNFIXED.md）——**KDE-GAP 差距清单可做项全部完成**
+        docs/UNFIXED.md）——**KDE-GAP 差距清单可做项全部完成**；
+        **UNFIXED 第 2 节修复批次 ✅**（修复已实现模块的已知简化：
+        w10viewer V1-V5——大文本 50MB 截断/对话框过滤器对齐/非模态
+        错误提示/MimeType 补全/GB18030 编码回退（Qt6Core5Compat）；
+        w10trash T1-T3——broken symlink filesystem 枚举 + selftest/
+        lastError EXDEV 透传/双击打开原始位置；FileIndex F1——
+        QFileSystemWatcher 增量更新（新增/删除即时反映，增量测试
+        PASS）；w10term O1——CSI 光标移动 + CUP + 备用屏最小 TUI
+        支持；默认应用 O2——新增"查看器"类别（image/*、pdf、
+        text/plain）；全部经编译 + selftest PASS；W1 壁纸闪烁（上游
+        LayerShellQt 限制）/O3 跨设备回收站/O4 激活置前 评估保留记录）
 - [x] 编译与冒烟验证（headless 运行 + 截图 + 像素校验，2026-08 Arch/WSL2 通过）
 - [x] 完整渲染验证（compositor + w10shell 同跑：桌面壁纸渐变 + 任务栏渲染成功，2026-08）
 - [ ] 真机/嵌套环境验证（DRM、XWayland 运行时、鼠标键盘实际交互）

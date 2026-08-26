@@ -177,8 +177,72 @@ void TerminalEdit::appendAnsi(const QByteArray& data) {
                     setCurrentCharFormat(curFmt_);
                 } else if (ch == QLatin1Char('K')) {
                     // 清行尾：忽略（MVP）。
+                } else if (ch == QLatin1Char('A')) {
+                    // 光标上移（审查 O1：TUI 最小支持）。
+                    QTextCursor c = textCursor();
+                    c.movePosition(QTextCursor::Up);
+                    setTextCursor(c);
+                    cursorMode_ = true;
+                } else if (ch == QLatin1Char('B')) {
+                    QTextCursor c = textCursor();
+                    c.movePosition(QTextCursor::Down);
+                    setTextCursor(c);
+                    cursorMode_ = true;
+                } else if (ch == QLatin1Char('C')) {
+                    QTextCursor c = textCursor();
+                    c.movePosition(QTextCursor::Right);
+                    setTextCursor(c);
+                    cursorMode_ = true;
+                } else if (ch == QLatin1Char('D')) {
+                    QTextCursor c = textCursor();
+                    c.movePosition(QTextCursor::Left);
+                    setTextCursor(c);
+                    cursorMode_ = true;
+                } else if (ch == QLatin1Char('H') || ch == QLatin1Char('f')) {
+                    // CUP：光标定位（row;col，1 基；空 = 1;1）。
+                    int row = 1, col = 1;
+                    const int semi = csiBuf_.indexOf(QLatin1Char(';'));
+                    if (!csiBuf_.isEmpty()) {
+                        if (semi >= 0) {
+                            row = csiBuf_.left(semi).toInt();
+                            col = csiBuf_.mid(semi + 1).toInt();
+                        } else {
+                            col = csiBuf_.toInt();
+                        }
+                    }
+                    if (row < 1) row = 1;
+                    if (col < 1) col = 1;
+                    QTextCursor c = textCursor();
+                    c.movePosition(QTextCursor::Start);
+                    for (int i = 1; i < row; ++i) {
+                        if (!c.movePosition(QTextCursor::NextBlock)) {
+                            break;
+                        }
+                    }
+                    c.movePosition(QTextCursor::StartOfBlock);
+                    for (int i = 1; i < col; ++i) {
+                        if (!c.movePosition(QTextCursor::NextCharacter)) {
+                            break;
+                        }
+                    }
+                    setTextCursor(c);
+                    cursorMode_ = true;
+                } else if (ch == QLatin1Char('h') &&
+                           (csiBuf_ == QLatin1String("?1049") ||
+                            csiBuf_ == QLatin1String("?47"))) {
+                    // 备用屏进入（?1049h / ?47h）：清屏进入定位模式。
+                    clear();
+                    cursorMode_ = true;
+                    curFmt_ = fmt;
+                    setCurrentCharFormat(curFmt_);
+                } else if (ch == QLatin1Char('l') &&
+                           (csiBuf_ == QLatin1String("?1049") ||
+                            csiBuf_ == QLatin1String("?47"))) {
+                    // 备用屏退出：恢复追加模式并清屏。
+                    cursorMode_ = false;
+                    clear();
                 }
-                // 其他 CSI（光标移动 H/A/B/C/D 等）：忽略（MVP 追加模式）。
+                // 其他 CSI（滚动区/字符集等）：忽略（MVP 追加模式）。
                 state_ = State::Text;
             }
             break;
@@ -203,7 +267,11 @@ void TerminalEdit::appendAnsi(const QByteArray& data) {
 
 void TerminalEdit::appendText(const QString& text, const QTextCharFormat& fmt) {
     QTextCursor c = textCursor();
-    c.movePosition(QTextCursor::End);
+    // 审查 O1：定位模式（CSI 光标/备用屏）在光标处插入；追加模式
+    // 保持末尾追加。
+    if (!cursorMode_) {
+        c.movePosition(QTextCursor::End);
+    }
     c.insertText(text, fmt);
 }
 

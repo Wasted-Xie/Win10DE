@@ -97,6 +97,21 @@ int runSelfTest(const QString& baseDir) {
         if (!w.loadFile(baseDir + QStringLiteral("/zh.txt"))) {
             return fail(QStringLiteral("中文文本加载失败"));
         }
+        // 审查 V5：GB18030（GBK 超集）文件——UTF-8 解码出现替换字符
+        // 时应回退 GB18030 成功加载。
+        {
+            // "中文" 的 GB18030 字节：D6 D0 CE C4。
+            QFile gb(baseDir + QStringLiteral("/gb.txt"));
+            if (!gb.open(QIODevice::WriteOnly)) {
+                return fail(QStringLiteral("写 GB18030 失败"));
+            }
+            gb.write(QByteArray("\xD6\xD0\xCE\xC4", 4));
+            gb.close();
+            w10de::viewer::ViewerWindow w2;
+            if (!w2.loadFile(baseDir + QStringLiteral("/gb.txt"))) {
+                return fail(QStringLiteral("GB18030 文本加载失败"));
+            }
+        }
     }
     out << "OK text-load\n";
 

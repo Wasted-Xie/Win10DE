@@ -18,6 +18,7 @@ QString defaultKindMime(DefaultKind kind) {
     case DefaultKind::Browser: return QStringLiteral("x-scheme-handler/http");
     case DefaultKind::Mail: return QStringLiteral("x-scheme-handler/mailto");
     case DefaultKind::FileManager: return QStringLiteral("inode/directory");
+    case DefaultKind::Viewer: return QStringLiteral("image/png");
     default: return QString();
     }
 }
@@ -33,6 +34,13 @@ QStringList defaultKindMimes(DefaultKind kind) {
         return {QStringLiteral("x-scheme-handler/mailto")};
     case DefaultKind::FileManager:
         return {QStringLiteral("inode/directory")};
+    case DefaultKind::Viewer:
+        // 审查 O2：查看器类别——图像/PDF/文本（w10viewer 支持范围）。
+        return {QStringLiteral("image/png"), QStringLiteral("image/jpeg"),
+                QStringLiteral("image/bmp"), QStringLiteral("image/webp"),
+                QStringLiteral("image/gif"), QStringLiteral("image/svg+xml"),
+                QStringLiteral("application/pdf"),
+                QStringLiteral("text/plain")};
     default:
         return {};
     }
@@ -43,6 +51,7 @@ QString defaultKindLabel(DefaultKind kind) {
     case DefaultKind::Browser: return QStringLiteral("Web 浏览器");
     case DefaultKind::Mail: return QStringLiteral("邮件客户端");
     case DefaultKind::FileManager: return QStringLiteral("文件管理器");
+    case DefaultKind::Viewer: return QStringLiteral("查看器（图像/PDF/文本）");
     default: return QString();
     }
 }

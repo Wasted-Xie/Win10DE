@@ -17,7 +17,9 @@
 #include <QScrollArea>
 #include <QStackedWidget>
 #include <QStatusBar>
+#include <QTextCodec>  // GB18030 探测（Qt6Core5Compat；审查 V5）
 #include <QTextStream>
+#include <QTimer>      // 非模态错误提示延迟（审查 V3）
 #include <QToolBar>
 
 #include <algorithm>  // std::clamp/std::min/std::max
@@ -36,6 +38,8 @@ constexpr double kMinScale = 0.25;
 constexpr double kMaxScale = 4.0;
 // 渲染/缩放尺寸上限（审查 M2/M3：防恶意超大 PDF 页/图像爆内存）。
 constexpr int kMaxRenderDim = 8192;
+// 大文本保护（审查 V1）：超过该字节数只读前缀，避免全量 readAll 卡顿。
+constexpr qint64 kMaxTextBytes = 50 * 1024 * 1024;
 
 double nextScaleStep(double current, bool up) {
     if (up) {
@@ -139,8 +143,12 @@ bool ViewerWindow::loadFile(const QString& path) {
         break;
     case FileKind::Unknown:
         setStatus(QStringLiteral("不支持的文件类型：%1").arg(path));
-        QMessageBox::warning(this, QStringLiteral("查看器"),
-            QStringLiteral("不支持的文件类型：\n%1").arg(path));
+        // 审查 V3：D-Bus Activate 槽内不可 exec() 阻塞调用方——
+        // 延迟到事件循环下一拍非模态弹出。
+        QTimer::singleShot(0, this, [this, path] {
+            QMessageBox::warning(this, QStringLiteral("查看器"),
+                QStringLiteral("不支持的文件类型：\n%1").arg(path));
+        });
         return false;
     }
     currentPath_ = path;  // 预留（后续"重新加载/最近文件"用；审查 L6）。
@@ -155,11 +163,15 @@ bool ViewerWindow::loadText(const QString& path) {
         setStatus(QStringLiteral("无法打开文件：%1").arg(path));
         return false;
     }
-    const QByteArray raw = f.readAll();
+    // 审查 V1：大文本（>50MB）只读前缀，避免全量 readAll + setPlainText
+    // 卡顿；状态栏提示截断。
+    const qint64 size = f.size();
+    const bool truncated = size > kMaxTextBytes;
+    const QByteArray raw = truncated ? f.read(kMaxTextBytes) : f.readAll();
     // 编码：BOM 优先（审查 M4：UTF-32 LE/BE BOM 会误匹配 UTF-16 的
-    // FF FE / FE FF 前缀，必须先判 4 字节 BOM）；无 BOM 按 UTF-8
-    // （非法序列由 fromUtf8 替换，容忍）。已知限制（审查 L13）：
-    // 全量读入 + setPlainText，>50MB 文本有明显卡顿，MVP 接受。
+    // FF FE / FE FF 前缀，必须先判 4 字节 BOM）；无 BOM 按 UTF-8，
+    // 出现替换字符时回退 GB18030（审查 V5：中文 Windows 遗留文件，
+    // Qt6 经 Qt6Core5Compat 的 QTextCodec）。
     QString text;
     if (raw.startsWith("\xFF\xFE\x00\x00")) {
         // UTF-32 LE（4 字节 BOM）。
@@ -191,6 +203,12 @@ bool ViewerWindow::loadText(const QString& path) {
             reinterpret_cast<const char16_t*>(le.constData()), le.size() / 2);
     } else {
         text = QString::fromUtf8(raw);
+        if (text.contains(QChar::ReplacementCharacter)) {
+            // 非法 UTF-8：回退 GB18030（GBK 超集，中文 Windows 文件）。
+            if (QTextCodec* codec = QTextCodec::codecForName("GB18030")) {
+                text = codec->toUnicode(raw);
+            }
+        }
     }
     textView_->setPlainText(text);
     stack_->setCurrentWidget(textView_);
@@ -200,7 +218,10 @@ bool ViewerWindow::loadText(const QString& path) {
     prevAction_->setEnabled(false);
     nextAction_->setEnabled(false);
     pageLabel_->clear();
-    setStatus(QStringLiteral("文本：%1 字符").arg(text.size()));
+    setStatus(truncated
+        ? QStringLiteral("文本：%1 字符（文件过大，仅显示前 %2 MB）")
+              .arg(text.size()).arg(kMaxTextBytes / (1024 * 1024))
+        : QStringLiteral("文本：%1 字符").arg(text.size()));
     return true;
 }
 
@@ -369,11 +390,18 @@ void ViewerWindow::nextPage() {
 }
 
 void ViewerWindow::openFileDialog() {
+    // 审查 V2：过滤器与 filetype 白名单对齐（text/image 全扩展名）。
     const QString path = QFileDialog::getOpenFileName(this,
         QStringLiteral("打开文件"), QDir::homePath(),
-        QStringLiteral("文本 (*.txt *.md *.log *.ini *.conf *.json *.cpp *.h "
-                       "*.py *.sh);;PDF 文档 (*.pdf);;图像 (*.png *.jpg *.jpeg "
-                       "*.bmp *.webp *.svg *.gif);;所有文件 (*)"));
+        QStringLiteral("文本 (*.txt *.md *.markdown *.log *.ini *.conf *.cfg "
+                       "*.json *.xml *.yaml *.yml *.toml *.csv *.tsv "
+                       "*.c *.h *.cpp *.hpp *.cc *.cxx *.py *.js *.ts "
+                       "*.sh *.bash *.zsh *.java *.rs *.go *.sql *.html *.htm "
+                       "*.css *.license *.readme *.diff *.patch);;"
+                       "PDF 文档 (*.pdf);;"
+                       "图像 (*.png *.jpg *.jpeg *.bmp *.webp *.gif *.svg "
+                       "*.svgz *.xpm *.ico *.tif *.tiff);;"
+                       "所有文件 (*)"));
     if (!path.isEmpty()) {
         loadFile(path);
     }

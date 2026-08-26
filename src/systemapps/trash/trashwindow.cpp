@@ -4,6 +4,8 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QDesktopServices>
+#include <QFileInfo>
 #include <QHeaderView>
 #include <QLabel>
 #include <QMessageBox>
@@ -89,8 +91,11 @@ void TrashWindow::buildUi() {
 
     connect(tree_, &QTreeWidget::itemSelectionChanged,
             this, &TrashWindow::updateActions);
+    // 审查 T3：双击打开原始位置（不再直接恢复，避免误触）。
     connect(tree_, &QTreeWidget::itemDoubleClicked,
-            this, [this](QTreeWidgetItem*, int) { restoreSelected(); });
+            this, [this](QTreeWidgetItem*, int) {
+                openSelectedLocation();
+            });
 }
 
 void TrashWindow::refresh() {
@@ -148,6 +153,7 @@ void TrashWindow::restoreSelected() {
     }
     int ok = 0;
     int failed = 0;
+    QString firstError;
     for (QTreeWidgetItem* item : items) {
         TrashEntry e;
         e.name = item->data(0, Qt::UserRole).toString();
@@ -155,14 +161,43 @@ void TrashWindow::restoreSelected() {
             ++ok;
         } else {
             ++failed;
+            // 审查 T2：透传失败原因（EXDEV 等）。
+            if (firstError.isEmpty()) {
+                firstError = store_.lastError();
+            }
         }
     }
     // 审查 M-4：refresh() 会重设计数消息，操作结果用超时消息避免被覆盖。
     refresh();
     statusBar()->showMessage(failed == 0
         ? QStringLiteral("已恢复 %1 项").arg(ok)
-        : QStringLiteral("恢复完成：成功 %1，失败 %2").arg(ok).arg(failed),
+        : QStringLiteral("恢复完成：成功 %1，失败 %2（%3）")
+              .arg(ok).arg(failed).arg(firstError),
         8000);
+}
+
+// 审查 T3：双击打开条目的原始位置（Windows 回收站双击语义更接近
+// "打开位置"；恢复保留在工具栏，避免误触移出回收站）。
+void TrashWindow::openSelectedLocation() {
+    const auto items = selectedItems();
+    if (items.size() != 1) {
+        return;
+    }
+    const QString name = items.first()->data(0, Qt::UserRole).toString();
+    // 从 info 读原始路径（与恢复同源）。
+    const TrashEntry e = store_.entryByName(name);
+    if (e.originalPath.isEmpty()) {
+        statusBar()->showMessage(
+            QStringLiteral("信息缺失，无法定位原始位置"), 5000);
+        return;
+    }
+    const QString dir = QFileInfo(e.originalPath).absolutePath();
+    if (!QFileInfo::exists(dir)) {
+        statusBar()->showMessage(
+            QStringLiteral("原始目录已不存在：%1").arg(dir), 5000);
+        return;
+    }
+    QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
 }
 
 void TrashWindow::deleteSelected() {

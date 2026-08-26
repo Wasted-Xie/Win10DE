@@ -9,7 +9,11 @@
 #include <QTextStream>
 #include <QUrl>
 
-#include <algorithm>  // std::sort
+#include <algorithm>   // std::sort
+#include <cerrno>      // errno（审查 T2：EXDEV 等跨设备错误透传）
+#include <cstring>     // std::strerror
+#include <filesystem>  // broken symlink 枚举（审查 T1）
+#include <utility>     // std::move
 
 namespace w10de::trash {
 
@@ -81,12 +85,20 @@ TrashEntry TrashStore::readInfo(const QString& name) const {
 
 QList<TrashEntry> TrashStore::list() const {
     QList<TrashEntry> result;
-    const QDir files(filesDir());
-    const QStringList names = files.entryList(
-        QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden);
-    for (const QString& name : names) {
-        TrashEntry e = readInfo(name);
-        result.append(e);
+    // 审查 T1：QDir::entryList 无法枚举 broken symlink（Qt 实测）——
+    // 改用 std::filesystem::directory_iterator（可列出链接本身）。
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::directory_iterator it(fs::path(filesDir().toStdString()), ec);
+    const fs::directory_iterator end;
+    for (; it != end && !ec; it.increment(ec)) {
+        const QString name = QString::fromStdString(
+            it->path().filename().string());
+        if (name.isEmpty() || name == QStringLiteral(".") ||
+                name == QStringLiteral("..")) {
+            continue;
+        }
+        result.append(readInfo(name));
     }
     // 审查 M-3/L7：不混用排序键——无删除时间的条目视为最早统一排最后；
     // 相同时间用名称（stable_sort 保持稳定）。
@@ -106,11 +118,14 @@ QList<TrashEntry> TrashStore::list() const {
 }
 
 bool TrashStore::restore(const TrashEntry& entry) {
+    lastError_.clear();
     if (!isSafeEntryName(entry.name)) {
+        lastError_ = QStringLiteral("无效条目名");
         return false;
     }
     const QString src = filesDir() + QLatin1Char('/') + entry.name;
     if (!QFileInfo::exists(src)) {
+        lastError_ = QStringLiteral("回收站内条目不存在");
         return false;
     }
     // 原始路径以 info/<name>.trashinfo 为准（调用方只需传 name）。
@@ -119,14 +134,19 @@ bool TrashStore::restore(const TrashEntry& entry) {
     // 相对路径会被解析到进程 cwd 导致恢复错位或任意写入，一律拒绝。
     const QString dst = QDir::cleanPath(full.originalPath);
     if (dst.isEmpty() || !QFileInfo(dst).isAbsolute()) {
+        lastError_ = QStringLiteral("缺少原始路径信息（info 损坏）");
         return false;
     }
     // 父目录不存在则创建（原始父目录可能已被删除）。
     if (!QDir().mkpath(QFileInfo(dst).absolutePath())) {
+        lastError_ = QStringLiteral("无法创建目标目录");
         return false;
     }
     const QString target = uniqueRestoreName(dst);
     if (!QFile::rename(src, target)) {
+        // 审查 T2：透传 errno 原因（跨设备 EXDEV 等）。
+        lastError_ = QStringLiteral("移动失败：%1").arg(
+            QString::fromLocal8Bit(std::strerror(errno)));
         return false;
     }
     // 成功恢复后删除 info（条目不再属于回收站）。
@@ -164,11 +184,19 @@ bool TrashStore::permanentDelete(const TrashEntry& entry) {
 }
 
 bool TrashStore::empty() {
-    const QDir files(filesDir());
-    const QStringList names = files.entryList(
-        QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden);
+    // 审查 T1：同 list()——filesystem 枚举（含 broken symlink）。
+    namespace fs = std::filesystem;
     bool allOk = true;
-    for (const QString& name : names) {
+    std::error_code ec;
+    fs::directory_iterator it(fs::path(filesDir().toStdString()), ec);
+    const fs::directory_iterator end;
+    for (; it != end && !ec; it.increment(ec)) {
+        const QString name = QString::fromStdString(
+            it->path().filename().string());
+        if (name.isEmpty() || name == QStringLiteral(".") ||
+                name == QStringLiteral("..")) {
+            continue;
+        }
         TrashEntry e;
         e.name = name;
         if (!permanentDelete(e)) {
@@ -179,6 +207,7 @@ bool TrashStore::empty() {
     // 审查 M-1：broken symlink 无法被 entryList 枚举且 QFileInfo::exists
     // 为 false——孤儿判断必须补 isSymLink，否则会误删仍有效条目（含
     // broken symlink 条目）的 trashinfo，使其不可恢复。
+    const QDir files(filesDir());
     const QDir infoDir_(infoDir());
     const QStringList infoNames = infoDir_.entryList(
         QStringList() << QStringLiteral("*.trashinfo"),

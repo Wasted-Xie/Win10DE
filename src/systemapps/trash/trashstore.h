@@ -45,6 +45,15 @@ public:
     // 清空回收站（全部 files + info）。返回是否全部成功。
     bool empty();
 
+    // 最近一次操作失败的原因（审查 T2：EXDEV 等跨设备错误透传给 UI）。
+    // 无失败或未操作时为空字符串。
+    QString lastError() const { return lastError_; }
+
+    // 按条目名读完整条目（含原始路径/删除时间；审查 T3：双击定位用）。
+    TrashEntry entryByName(const QString& name) const {
+        return readInfo(name);
+    }
+
     QString trashDir() const { return trashDir_; }
 
 private:
@@ -54,6 +63,7 @@ private:
     TrashEntry readInfo(const QString& name) const;
 
     QString trashDir_;
+    QString lastError_;  // 最近一次失败原因（restore/permanentDelete）
 };
 
 }  // namespace w10de::trash

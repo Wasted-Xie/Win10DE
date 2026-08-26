@@ -29,29 +29,29 @@
 
 ### 2.1 w10viewer（文本/PDF/图像查看器）
 
-| # | 问题 | 级别 | 修复建议 |
-|---|------|------|----------|
-| V1 | 大文本（>50MB）全量 `readAll()` + `setPlainText`，明显卡顿 | L | 分块读取/虚拟化（QPlainTextEdit 无内置虚拟化，需自定义 model 或限制打开大小） |
-| V2 | 文件对话框过滤器窄于类型白名单（缺 xml/yaml/csv/rs/go/tiff/xpm/ico） | L | 过滤器与 `textExtensions()/imageExtensions()` 对齐；"所有文件"可绕过，非缺陷 |
-| V3 | 未知类型时 `QMessageBox::warning` 在 D-Bus Activate 槽内 `exec()`，阻塞调用方 | L | `QTimer::singleShot(0, ...)` 延迟弹出或非模态 |
-| V4 | `.desktop` MimeType 未声明全部支持格式（tiff/x-xpixmap/x-ico/csv/xml/yaml 等），文件管理器不关联这些文件 | L | 补 MimeType 声明 |
-| V5 | GBK/GB18030 编码文本不支持（仅 UTF-8/UTF-16/UTF-32 BOM） | R | 真机中文 Windows 遗留文件场景；可选 QTextCodec 探测 |
+| # | 问题 | 级别 | 状态 |
+|---|------|------|------|
+| V1 | 大文本（>50MB）全量 `readAll()` + `setPlainText`，明显卡顿 | L | ✅ 已修：>50MB 只读前缀 + 状态栏提示截断 |
+| V2 | 文件对话框过滤器窄于类型白名单（缺 xml/yaml/csv/rs/go/tiff/xpm/ico） | L | ✅ 已修：过滤器与白名单对齐（全扩展名） |
+| V3 | 未知类型时 `QMessageBox::warning` 在 D-Bus Activate 槽内 `exec()`，阻塞调用方 | L | ✅ 已修：QTimer::singleShot 延迟非模态 |
+| V4 | `.desktop` MimeType 未声明全部支持格式（tiff/x-xpixmap/x-ico/csv/xml/yaml 等） | L | ✅ 已修：MimeType 与白名单对齐 |
+| V5 | GBK/GB18030 编码文本不支持（仅 UTF-8/UTF-16/UTF-32 BOM） | R | ✅ 已修：UTF-8 替换字符回退 GB18030（Qt6Core5Compat QTextCodec） |
 
 ### 2.2 w10trash（回收站窗口）
 
-| # | 问题 | 级别 | 修复建议 |
-|---|------|------|----------|
-| T1 | broken symlink 无法被 `QDir::entryList` 枚举（Qt 实测），列表不可见、不可单独清理（empty 可清其 info） | L | `std::filesystem::directory_iterator` 枚举；头注释已记录 |
-| T2 | 跨设备恢复（EXDEV）失败无原因提示，窗口仅显示"失败" | L | 错误信息透传（errno→中文） |
-| T3 | 双击条目直接恢复无确认（Windows 语义是预览/打开） | L | 产品决策：改预览或加确认 |
-| T4 | restore 的 uniqueRestoreName 检查与 rename 之间极小竞态（Unix rename 会覆盖） | R | 桌面概率可忽略，代码注释已说明 |
+| # | 问题 | 级别 | 状态 |
+|---|------|------|------|
+| T1 | broken symlink 无法被 `QDir::entryList` 枚举（Qt 实测），列表不可见、不可单独清理（empty 可清其 info） | L | ✅ 已修：list/empty 改用 `std::filesystem::directory_iterator`（可枚举 broken symlink）+ selftest 断言 |
+| T2 | 跨设备恢复（EXDEV）失败无原因提示，窗口仅显示"失败" | L | ✅ 已修：TrashStore::lastError() 透传 errno（strerror），UI 显示原因 |
+| T3 | 双击条目直接恢复无确认（Windows 语义是预览/打开） | L | ✅ 已修：双击改为"打开原始位置"（QDesktopServices 定位父目录）；恢复保留工具栏 |
+| T4 | restore 的 uniqueRestoreName 检查与 rename 之间极小竞态（Unix rename 会覆盖） | R | 保留记录：桌面概率可忽略，代码注释已说明 |
 
 ### 2.3 文件索引（FileIndex）
 
-| # | 问题 | 级别 | 修复建议 |
-|---|------|------|----------|
-| F1 | 无增量更新（未接 QFileSystemWatcher），索引一次后新文件需重启 w10shell 才可搜 | L | QFileSystemWatcher 监听主目录增量入库 |
-| F2 | 内容索引有闸门（5000 文件/200 万词对/停用词），超限文件只入名称索引 | R | 文档记录；平衡内存的刻意设计 |
+| # | 问题 | 级别 | 状态 |
+|---|------|------|------|
+| F1 | 无增量更新（未接 QFileSystemWatcher），索引一次后新文件需重启 w10shell 才可搜 | L | ✅ 已修：QFileSystemWatcher 监听 rootDir + 顶层子目录，目录变化事件归并（150ms）+ 批量删除（contentWords 一次全表扫），增量入库即时反映；增量验证 PASS（新增入库/删除移除）。**已知限制**：只监听目录（文件 in-place 修改不触发，增删覆盖）；顶层子目录整体 rmdir 深层残留索引（注释已承认）；更深层目录未监听 |
+| F2 | 内容索引有闸门（5000 文件/200 万词对/停用词），超限文件只入名称索引 | R | 保留记录：平衡内存的刻意设计 |
 
 ### 2.4 壁纸幻灯片
 
@@ -75,14 +75,13 @@
 
 ### 2.7 其他
 
-| # | 模块 | 问题 | 级别 |
-|---|------|------|------|
-| O1 | w10term | ANSI 追加模式无光标移动（简化），部分 TUI（vim/htop 全屏）显示异常 | L |
-| O2 | 默认应用 | 仅管理 3 类（浏览器/邮件/文件管理器），查看器/终端等类型未入设置页（w10viewer.desktop 的 MimeType 需手动或后续扩展） | L |
-| O3 | 每应用音量 | 滑块拖动→音量变化为真机交互验证项（headless 端到端已验证枚举与显示；Qt 滑块释放丢最终值缺陷已修（sliderReleased），写链路代码经审查）；sink-input 无 Pulse 事件订阅（subscribe），流增删/音量变化需手动刷新 | 真机项 |
-| O2 | 默认应用 | 仅管理 3 类（浏览器/邮件/文件管理器），查看器/终端等类型未入设置页（w10viewer.desktop 的 MimeType 需手动或后续扩展） | L |
-| O3 | w10explorer | 删除进回收站仅主回收站（~/.local/share/Trash），系统分区顶层回收站（/.Trash-<uid>）与跨设备删除不支持（QFile::rename EXDEV 不上报成功） | R |
-| O4 | 窗口 | Alt+Tab/任务栏对 Wayland 激活置前（activateWindow）受 xdg-activation token 限制，部分场景无法真置前 | R |
+| # | 模块 | 问题 | 级别 | 状态 |
+|---|------|------|------|------|
+| O1 | w10term | ANSI 追加模式无光标移动（简化），部分 TUI（vim/htop 全屏）显示异常 | L | ✅ 已修：CSI A/B/C/D 光标移动 + H/f 定位 + 备用屏（?1049h/l）——进入"定位模式"在光标处插入；TUI 最小支持（无滚动区）。**已知限制**：定位模式换行无 CR（光标留原列）；备用屏退出 clear() 丢主屏回显（vim 退出后终端空白）；参数化 CSI（[3A）忽略参数只移 1 格 |
+| O2 | 默认应用 | 仅管理 3 类（浏览器/邮件/文件管理器），查看器/终端等类型未入设置页 | L | ✅ 已修：新增"查看器"类别（image/*、application/pdf、text/plain → w10viewer.desktop）；终端无标准 mime 未加 |
+| O3 | 每应用音量 | 滑块拖动→音量变化为真机交互验证项；sink-input 无 Pulse 事件订阅，流增删需手动刷新 | 真机项 | 保留：真机验证；事件订阅可后加 |
+| O3 | w10explorer | 删除进回收站仅主回收站，系统分区顶层回收站（/.Trash-<uid>）与跨设备删除不支持（QFile::rename EXDEV 不上报成功） | R | 保留：跨设备安全失败（不上报成功）为保守行为；.Trash-uid 需分区检测，MVP 不做 |
+| O4 | 窗口 | Alt+Tab/任务栏对 Wayland 激活置前（activateWindow）受 xdg-activation token 限制，部分场景无法真置前 | R | 保留：需 compositor 实现 xdg-activation-v1 + shell 请求 token，工程量大 |
 
 ---
 

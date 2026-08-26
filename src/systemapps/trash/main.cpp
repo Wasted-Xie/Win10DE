@@ -115,6 +115,31 @@ int runSelfTest(const QString& baseDir) {
         if (!foundA || !foundB) {
             return fail(QStringLiteral("列表缺条目"));
         }
+        // 审查 T1：broken symlink 应可枚举（QDir::entryList 不可见，
+        // filesystem::directory_iterator 可列出）。
+        {
+            if (!QFile::link(origDir + QStringLiteral("/nonexistent"),
+                             files + QStringLiteral("/broken-link"))) {
+                return fail(QStringLiteral("创建 broken symlink 失败"));
+            }
+            const auto withBroken = store.list();
+            bool foundBroken = false;
+            for (const auto& e : withBroken) {
+                if (e.name == QStringLiteral("broken-link")) {
+                    foundBroken = true;
+                    break;
+                }
+            }
+            if (!foundBroken) {
+                return fail(QStringLiteral("broken symlink 未被枚举"));
+            }
+            // 清理（彻底删除应只删链接本身）。
+            w10de::trash::TrashEntry be;
+            be.name = QStringLiteral("broken-link");
+            if (!store.permanentDelete(be)) {
+                return fail(QStringLiteral("broken symlink 删除失败"));
+            }
+        }
     }
     out << "OK list\n";
 

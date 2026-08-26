@@ -294,6 +294,7 @@ target_include_directories(w10viewer PRIVATE
 target_link_libraries(w10viewer PRIVATE
     Qt6::Widgets
     Qt6::DBus
+    Qt6::Core5Compat  # 审查 V5：GB18030 文本编码（QTextCodec）
     PkgConfig::POPPLER_QT6
     systemapps_appipc
 )
@@ -309,8 +310,11 @@ file(WRITE "${VIEWER_DESKTOP}"
     "Exec=w10viewer %f\n"
     "Icon=document-viewer\n"
     "Terminal=false\n"
-    "MimeType=text/plain;text/markdown;text/x-log;application/pdf;"
-    "image/png;image/jpeg;image/bmp;image/webp;image/svg+xml;image/gif;\n"
+    # 审查 V4：MimeType 与 filetype 白名单对齐（含 tiff/xpm/ico/csv/xml 等）。
+    "MimeType=text/plain;text/markdown;text/x-log;text/csv;text/xml;"
+    "text/yaml;text/x-json;text/x-c;text/x-c++;text/x-shellscript;"
+    "application/pdf;image/png;image/jpeg;image/bmp;image/webp;image/gif;"
+    "image/svg+xml;image/tiff;image/x-xpixmap;image/x-ico;\n"
     "Categories=Graphics;Office;Viewer;\n"
     "StartupNotify=true\n")
 install(FILES "${VIEWER_DESKTOP}" DESTINATION share/applications)

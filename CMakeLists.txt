@@ -37,7 +37,7 @@ option(W10DE_BUILD_SHELL "Build the Qt shell client (taskbar/start menu)" ON)
 if(W10DE_BUILD_SHELL)
     # layer-shell 绑定：KDE layer-shell-qt（Plasma 生产使用，API 稳定）。
     # 备选：Qt 6.5+ 原生 QWaylandLayerShell（API 文档不足，暂不用）。
-    find_package(Qt6 REQUIRED COMPONENTS Widgets WaylandClient DBus)
+    find_package(Qt6 REQUIRED COMPONENTS Widgets WaylandClient DBus Core5Compat)
     find_package(LayerShellQt REQUIRED)
 endif()
 

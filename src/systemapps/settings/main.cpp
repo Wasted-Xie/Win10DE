@@ -150,6 +150,7 @@ int runSelfTest(const QString& baseDir) {
         }
         defaults.insert(QStringLiteral("x-scheme-handler/http"), QStringLiteral("firefox.desktop"));
         defaults.insert(QStringLiteral("inode/directory"), QStringLiteral("w10explorer.desktop"));
+        defaults.insert(QStringLiteral("image/png"), QStringLiteral("w10viewer.desktop"));
         if (!w10de::settings::DefaultApps::saveMimeDefaults(mimeapps, defaults)) {
             return fail(QStringLiteral("保存 mimeapps 失败"));
         }
@@ -161,6 +162,11 @@ int runSelfTest(const QString& baseDir) {
         if (reread.value(QStringLiteral("inode/directory"))
                 != QStringLiteral("w10explorer.desktop")) {
             return fail(QStringLiteral("文件管理器默认未保存"));
+        }
+        // 审查 O2：查看器类别（image/png → w10viewer.desktop）。
+        if (reread.value(QStringLiteral("image/png"))
+                != QStringLiteral("w10viewer.desktop")) {
+            return fail(QStringLiteral("查看器默认未保存"));
         }
         QFile rf(mimeapps);
         if (!rf.open(QIODevice::ReadOnly | QIODevice::Text)) {

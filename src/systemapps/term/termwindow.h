@@ -53,6 +53,9 @@ private:
     bool fgBright_ = false;    // 90-97 亮色标志（M3）
     int bg_ = -1;
     bool bgBright_ = false;
+    // 审查 O1（光标移动）：CSI 定位/备用屏后进入"定位模式"——插入在
+    // 当前光标而非强制末尾（追加模式默认）。TUI 最小支持。
+    bool cursorMode_ = false;
     QByteArray pendingUtf8_;   // 跨 chunk 不完整 UTF-8 序列（S2）
     std::function<void(const QByteArray&)> sink_;
 };

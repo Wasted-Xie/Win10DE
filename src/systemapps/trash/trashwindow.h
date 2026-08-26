@@ -30,6 +30,8 @@ private slots:
     void restoreSelected();
     void deleteSelected();
     void emptyTrash();
+    // 审查 T3：双击打开条目原始位置（替代直接恢复，避免误触）。
+    void openSelectedLocation();
 
 private:
     void buildUi();

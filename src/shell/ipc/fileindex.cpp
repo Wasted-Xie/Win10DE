@@ -9,6 +9,7 @@
 #include <QRegularExpression>
 #include <QSet>
 #include <QThread>
+#include <QTimer>
 
 namespace w10de::ipc {
 
@@ -109,10 +110,12 @@ void FileIndex::startIndexing(const QString& rootDir) {
     // 工作线程执行扫描（避免卡 UI；快照完成后原子替换）。
     thread_ = QThread::create([this, root] { runIndexing(root); });
     thread_->setObjectName(QStringLiteral("w10de-fileindex"));
-    QObject::connect(thread_, &QThread::finished, this, [this] {
+    QObject::connect(thread_, &QThread::finished, this, [this, root] {
         thread_->deleteLater();
         thread_ = nullptr;
         ready_ = true;
+        // 审查 F1：索引完成后注册增量监听（rootDir + 顶层子目录）。
+        setupWatcher(root);
         emit indexingFinished();
     });
     thread_->start();
@@ -199,6 +202,174 @@ void FileIndex::runIndexing(const QString& rootDir) {
     // 原子替换快照。
     snap.count = count;
     current_ = std::move(snap);
+}
+
+void FileIndex::indexSingleFile(const QString& path, Snapshot& snap) {
+    // 审查 F1：单文件增量索引（名称 + 内容；与全量扫描同规则）。
+    const QFileInfo fi(path);
+    if (!fi.isFile()) {
+        return;
+    }
+    const QString name = fi.fileName();
+    snap.nameLower.insert(path, name.toLower());
+    ++snap.count;
+    // 内容索引（同全量扫描规则：文本扩展名 + 大小上限 + 前 8KB）。
+    if (isTextFile(name) && fi.size() <= kMaxContentBytes) {
+        QFile f(path);
+        if (f.open(QIODevice::ReadOnly)) {
+            const QByteArray head = f.read(8192);
+            f.close();
+            const QStringList words = tokenize(QString::fromUtf8(head));
+            for (const QString& w : words) {
+                if (isStopWord(w)) {
+                    continue;
+                }
+                snap.contentWords[w].insert(path);
+            }
+        }
+    }
+}
+
+void FileIndex::removeFromSnapshot(Snapshot& snap, const QString& path) {
+    // 名称索引移除 + 内容倒排全量扫（倒排索引删除需遍历词表——
+    // 单路径场景直接调用；批量场景用 removePathsFromSnapshot）。
+    snap.nameLower.remove(path);
+    for (auto it = snap.contentWords.begin();
+         it != snap.contentWords.end();) {
+        it.value().remove(path);
+        if (it.value().isEmpty()) {
+            it = snap.contentWords.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    if (snap.count > 0) {
+        --snap.count;
+    }
+}
+
+void FileIndex::removePathsFromSnapshot(Snapshot& snap,
+                                        const QStringList& paths) {
+    // 审查 M：批量移除——contentWords 一次全表扫移除全部路径
+    //（避免每文件全扫一遍 O(k·|V|)）。
+    const QSet<QString> pathSet(paths.begin(), paths.end());
+    for (const QString& p : pathSet) {
+        snap.nameLower.remove(p);
+    }
+    for (auto it = snap.contentWords.begin();
+         it != snap.contentWords.end();) {
+        for (const QString& p : pathSet) {
+            it.value().remove(p);
+        }
+        if (it.value().isEmpty()) {
+            it = snap.contentWords.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    snap.count = std::max(0, snap.count - static_cast<int>(pathSet.size()));
+}
+
+void FileIndex::setupWatcher(const QString& rootDir) {
+    // 审查 F1：监听 rootDir 顶层 + 一层子目录（文件直接新增/删除可捕获；
+    // 更深层目录变化靠手动重建——已知简化）。
+    if (watcher_ == nullptr) {
+        watcher_ = new QFileSystemWatcher(this);
+        connect(watcher_, &QFileSystemWatcher::directoryChanged,
+                this, &FileIndex::onDirectoryChanged);
+        connect(watcher_, &QFileSystemWatcher::fileChanged,
+                this, &FileIndex::onFileChanged);
+    } else {
+        const QStringList old = watcher_->directories();
+        if (!old.isEmpty()) {
+            watcher_->removePaths(old);
+        }
+        const QStringList oldFiles = watcher_->files();
+        if (!oldFiles.isEmpty()) {
+            watcher_->removePaths(oldFiles);
+        }
+    }
+    QStringList dirs;
+    dirs << rootDir;
+    const QDir root(rootDir);
+    const QStringList entries = root.entryList(
+        QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden);
+    for (const QString& e : entries) {
+        if (!isExcludedDir(e)) {
+            dirs << root.filePath(e);
+        }
+    }
+    watcher_->addPaths(dirs);
+}
+
+void FileIndex::onDirectoryChanged(const QString& path) {
+    // 审查 F1/M：目录变化（新增/删除文件）——事件归并（批量目录变化
+    // 合并为一次处理，避免每事件全快照深拷贝卡 UI）。
+    if (!ready_) {
+        return;
+    }
+    pendingDirs_.insert(path);
+    if (pendingTimer_ == nullptr) {
+        pendingTimer_ = new QTimer(this);
+        pendingTimer_->setSingleShot(true);
+        pendingTimer_->setInterval(150);  // 150ms 归并窗口
+        connect(pendingTimer_, &QTimer::timeout,
+                this, &FileIndex::flushPendingDirs);
+    }
+    pendingTimer_->start();
+}
+
+void FileIndex::flushPendingDirs() {
+    if (pendingDirs_.isEmpty() || !ready_) {
+        return;
+    }
+    const QSet<QString> dirs = pendingDirs_;
+    pendingDirs_.clear();
+    Snapshot snap = current_;  // 值语义拷贝（首次修改 detach，一次）
+    QStringList toRemove;
+    // 收集所有待处理目录直接子文件的旧 key（const 遍历无失效问题）。
+    for (auto it = snap.nameLower.constBegin();
+         it != snap.nameLower.constEnd(); ++it) {
+        for (const QString& dir : dirs) {
+            const QString prefix = dir + QLatin1Char('/');
+            if (it.key().startsWith(prefix) &&
+                    !it.key().mid(prefix.size())
+                         .contains(QLatin1Char('/'))) {
+                toRemove.append(it.key());
+                break;
+            }
+        }
+    }
+    removePathsFromSnapshot(snap, toRemove);
+    // 重扫待处理目录顶层文件。
+    for (const QString& dir : dirs) {
+        const QDir d(dir);
+        const QStringList files = d.entryList(
+            QDir::Files | QDir::NoDotAndDotDot | QDir::Hidden);
+        for (const QString& fname : files) {
+            indexSingleFile(d.filePath(fname), snap);
+        }
+    }
+    snap.truncated = current_.truncated;  // 保留截断标志
+    current_ = std::move(snap);
+    emit indexingFinished();  // 通知 UI 刷新搜索结果
+}
+
+void FileIndex::onFileChanged(const QString& path) {
+    // 审查 F1：文件被删/改——存在则重索引，否则移除。
+    // 注：setupWatcher 只监听目录（文件 in-place 修改不触发 fileChanged；
+    // 增删由目录事件覆盖）。本路径保留用于未来 addPath 文件监听。
+    if (!ready_) {
+        return;
+    }
+    Snapshot snap = current_;
+    removeFromSnapshot(snap, path);
+    if (QFileInfo::exists(path)) {
+        indexSingleFile(path, snap);
+    }
+    snap.truncated = current_.truncated;
+    current_ = std::move(snap);
+    emit indexingFinished();
 }
 
 QStringList FileIndex::search(const QString& term, int maxResults) const {

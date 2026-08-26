@@ -23,6 +23,7 @@ enum class DefaultKind {
     Browser,   // x-scheme-handler/http + https + text/html
     Mail,      // x-scheme-handler/mailto
     FileManager,  // inode/directory
+    Viewer,    // 审查 O2：图像/PDF/文本查看器（image/*、application/pdf、text/plain）
     Count,
 };
 QString defaultKindMime(DefaultKind kind);         // 主 mime 类型（http）

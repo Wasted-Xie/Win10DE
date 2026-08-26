@@ -503,5 +503,13 @@ WLR_BACKEND=wayland ./build/src/compositor/w10compositor --frames 0
   复用 startFadeIn；真机验证项）——**低优先完成**（Night Light + KWin
   淡入/还原 ✅；全局菜单/KWallet/登录管理器/KWin 其余特效经评估 MVP
   不做，理由见 docs/UNFIXED.md）——**KDE-GAP 差距清单可做项全部完成**
+  → **UNFIXED 第 2 节修复批次 ✅**（修复已实现模块已知简化：w10viewer
+  V1-V5（大文本 50MB 截断/过滤器对齐/非模态提示/MimeType 补全/
+  GB18030 编码回退 + Qt6Core5Compat）；w10trash T1-T3（broken
+  symlink filesystem 枚举/lastError EXDEV 透传/双击打开原始位置）；
+  FileIndex F1（QFileSystemWatcher 增量：事件归并 + 批量删除，审查
+  M 的 O(k·|V|) 已修）；w10term O1（CSI 光标 + CUP + 备用屏）；默认
+  应用 O2（查看器类别）；全部编译 + selftest/增量测试 PASS + 子代理
+  审查（无 S1，1 M 已修）；W1/O3/O4/I 组/L1 评估保留记录）
 - **不要**重新核对已确认的 API（见第 4 节决策表与源码注释中的"已确认"标注）；新增 wlr_* 调用时对照 `third_party/wlroots/include/`。
 - **维护规则（用户明确要求）**：**每次完成任务/里程碑时，更新 `README.md` 的同时必须同步更新本文档**（状态表、文件清单、决策、已知问题、下一步）。本文档不是一次性的——它随项目演进持续维护，任何"进行中"状态必须在每次交接时准确反映。若 README 有变更而本文档未同步，视为交接不完整。
