@@ -465,6 +465,25 @@ bool CompositorDbus::handleMethod(const char* method, DBusMessage* message,
         *reply = dbus_message_new_method_return(message);
         return true;
     }
+    if (std::strcmp(method, "InputKey") == 0) {
+        // E8 屏幕键盘：虚拟键盘注入。InputKey(u keysym, b pressed)。
+        if (dbus_message_iter_get_arg_type(args) != DBUS_TYPE_UINT32) {
+            return false;
+        }
+        dbus_uint32_t keysym = 0;
+        dbus_message_iter_get_basic(args, &keysym);
+        dbus_message_iter_next(args);
+        if (dbus_message_iter_get_arg_type(args) != DBUS_TYPE_BOOLEAN) {
+            return false;
+        }
+        dbus_bool_t pressed = FALSE;
+        dbus_message_iter_get_basic(args, &pressed);
+        if (compositor_.seat() != nullptr) {
+            compositor_.seat()->injectKey(keysym, pressed != FALSE);
+        }
+        *reply = dbus_message_new_method_return(message);
+        return true;
+    }
     return false;  // 未知方法
 }
 

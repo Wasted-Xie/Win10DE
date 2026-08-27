@@ -1,0 +1,5 @@
+# E6 录音机端到端验证专用 PulseAudio 配置（匿名认证 + 测试源）。
+# 正弦波由 pacat 播放到 testnull，录音机录 testnull.monitor。
+load-module module-native-protocol-unix auth-anonymous=1
+load-module module-always-sink
+load-module module-null-sink sink_name=testnull

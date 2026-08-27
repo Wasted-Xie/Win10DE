@@ -3,6 +3,9 @@
 
 #include <linux/input-event-codes.h>  // BTN_LEFT 等
 
+#include <ctime>  // clock_gettime（E8 虚拟键盘注入时间戳）
+#include <cstring>  // strcmp（E8：osk 窗口 app_id 判定）
+
 // XKB 键符宏（XKB_KEY_q 等）在独立头文件中。
 #include <xkbcommon/xkbcommon-keysyms.h>
 
@@ -44,6 +47,9 @@ Seat::Seat(Compositor& compositor) : compositor_(compositor) {
     }
     wlr_seat_set_capabilities(seat_,
         WL_SEAT_CAPABILITY_POINTER | WL_SEAT_CAPABILITY_KEYBOARD);
+    // E8：无真实键盘时预建合成虚拟键盘——客户端连上即收到 keymap
+    //（屏幕键盘注入的前提；真实键盘热插拔后由 handleNewInput 覆盖）。
+    ensureVirtualKeyboard();
 
     cursor_ = wlr_cursor_create();
     if (cursor_ == nullptr) {
@@ -116,6 +122,24 @@ Seat::~Seat() {
     }
     if (cursorMgr_ != nullptr) {
         wlr_xcursor_manager_destroy(cursorMgr_);
+    }
+    // E8：释放默认 keymap / xkb context / 注入状态（虚拟键盘注入用）。
+    if (injectState_ != nullptr) {
+        xkb_state_unref(injectState_);
+        injectState_ = nullptr;
+    }
+    if (virtualKeyboard_ != nullptr) {
+        // seat 已销毁（监听已摘），直接释放合成对象。
+        free(virtualKeyboard_);
+        virtualKeyboard_ = nullptr;
+    }
+    if (defaultKeymap_ != nullptr) {
+        xkb_keymap_unref(defaultKeymap_);
+        defaultKeymap_ = nullptr;
+    }
+    if (xkbContext_ != nullptr) {
+        xkb_context_unref(xkbContext_);
+        xkbContext_ = nullptr;
     }
 }
 
@@ -245,6 +269,135 @@ void Seat::configureKeyboard(wlr_keyboard* kb) {
     xkb_context_unref(ctx);
 }
 
+// ---- E8 虚拟键盘注入（屏幕键盘 w10osk 经 D-Bus InputKey 调用）----
+
+xkb_keycode_t Seat::keysymToKeycode(xkb_keymap* kmap, xkb_keysym_t sym) {
+    if (kmap == nullptr) {
+        return XKB_KEYCODE_INVALID;
+    }
+    // 遍历全部 keycode 的 level 0/1（shift 层）找匹配 keysym。
+    // O(keycount×2) 的一次性反查；常用键（字母/数字/符号/功能键）均在
+    // level 0/1 直接可达。
+    const xkb_keycode_t min = xkb_keymap_min_keycode(kmap);
+    const xkb_keycode_t max = xkb_keymap_max_keycode(kmap);
+    for (xkb_keycode_t kc = min; kc <= max; ++kc) {
+        for (int level = 0; level <= 1; ++level) {
+            const xkb_keysym_t* syms = nullptr;
+            const int n = xkb_keymap_key_get_syms_by_level(
+                kmap, kc, 0, level, &syms);
+            if (n > 0 && syms[0] == sym) {
+                return kc;
+            }
+        }
+    }
+    return XKB_KEYCODE_INVALID;
+}
+
+void Seat::ensureVirtualKeyboard() {
+    // 审查 S2：真实键盘拔除后重绑（wlr_seat_get_keyboard 为空时）。
+    if (virtualKeyboard_ != nullptr) {
+        if (wlr_seat_get_keyboard(seat_) == nullptr && seat_ != nullptr) {
+            // 重新绑定虚拟键盘：向已连客户端补发 keymap（wlr 内部处理）。
+            wlr_seat_set_keyboard(seat_, virtualKeyboard_);
+        }
+        return;
+    }
+    if (keyboard_ != nullptr) {
+        return;  // 有真实键盘，不需要虚拟键盘
+    }
+    if (xkbContext_ == nullptr) {
+        xkbContext_ = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+    }
+    if (xkbContext_ == nullptr) {
+        return;
+    }
+    if (defaultKeymap_ == nullptr) {
+        defaultKeymap_ = xkb_keymap_new_from_names(
+            xkbContext_, nullptr, XKB_KEYMAP_COMPILE_NO_FLAGS);
+    }
+    if (defaultKeymap_ == nullptr) {
+        return;
+    }
+    // 审查 L1：calloc 失败判空。
+    virtualKeyboard_ = static_cast<wlr_keyboard*>(
+        calloc(1, sizeof(wlr_keyboard)));
+    if (virtualKeyboard_ == nullptr) {
+        return;
+    }
+    virtualKeyboard_->base.type = WLR_INPUT_DEVICE_KEYBOARD;
+    wl_signal_init(&virtualKeyboard_->base.events.destroy);
+    wl_signal_init(&virtualKeyboard_->events.key);
+    wl_signal_init(&virtualKeyboard_->events.modifiers);
+    wl_signal_init(&virtualKeyboard_->events.keymap);
+    wl_signal_init(&virtualKeyboard_->events.repeat_info);
+    // 审查 S1：calloc 清零使 keymap_fd==0，wlr_keyboard_set_keymap 内部
+    // keyboard_unset_keymap 会 close(0)（关闭 stdin）；显式置 -1。
+    virtualKeyboard_->keymap_fd = -1;
+    virtualKeyboard_->repeat_info.rate = 25;
+    virtualKeyboard_->repeat_info.delay = 600;
+    // 先设 keymap（wlr_keyboard_set_keymap 更新 kb 内部 + 触发 keymap
+    // 事件），再绑定 seat——set_keyboard 向已连接客户端广播 keymap。
+    // 审查 L2：set_keymap 失败记录日志（客户端收 NO_KEYMAP 静默降级）。
+    if (!wlr_keyboard_set_keymap(virtualKeyboard_, defaultKeymap_)) {
+        wlr_log(WLR_ERROR, "ensureVirtualKeyboard: set_keymap failed");
+    }
+    wlr_seat_set_keyboard(seat_, virtualKeyboard_);
+    keymapNotified_ = true;
+}
+
+void Seat::injectKey(uint32_t keysym, bool pressed) {
+    if (seat_ == nullptr) {
+        return;
+    }
+    // keymap 来源：真实键盘（用户布局）优先；无真实键盘用默认 us keymap
+    //（合成虚拟键盘由 ensureVirtualKeyboard 预建）。
+    xkb_keymap* kmap = nullptr;
+    if (keyboard_ != nullptr && keyboard_->keymap != nullptr) {
+        kmap = keyboard_->keymap;
+    } else {
+        ensureVirtualKeyboard();
+        kmap = defaultKeymap_;
+    }
+    const xkb_keycode_t kc = keysymToKeycode(kmap, keysym);
+    if (kc == XKB_KEYCODE_INVALID) {
+        wlr_log(WLR_DEBUG, "injectKey: no keycode for keysym 0x%x", keysym);
+        return;
+    }
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    const uint32_t timeMsec =
+        static_cast<uint32_t>(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
+    // wlroots keycode 比 xkb keycode 小 8（同 processKey）。
+    // 审查 M2：先更新修饰键并 notify_modifiers，再 notify_key——
+    // 客户端按事件顺序解码，mods 先到可消除"字符键先于修饰键"时序窗口。
+    if (injectState_ == nullptr || injectStateKeymap_ != kmap) {
+        // 审查 M3：keymap 变化（真实键盘热插拔/布局切换）时重建注入状态。
+        if (injectState_ != nullptr) {
+            xkb_state_unref(injectState_);
+        }
+        injectState_ = kmap != nullptr ? xkb_state_new(kmap) : nullptr;
+        injectStateKeymap_ = kmap;
+    }
+    if (injectState_ != nullptr) {
+        xkb_state_update_key(injectState_, kc,
+                             pressed ? XKB_KEY_DOWN : XKB_KEY_UP);
+        wlr_keyboard_modifiers mods = {};
+        mods.depressed = xkb_state_serialize_mods(
+            injectState_, XKB_STATE_MODS_DEPRESSED);
+        mods.latched = xkb_state_serialize_mods(
+            injectState_, XKB_STATE_MODS_LATCHED);
+        mods.locked = xkb_state_serialize_mods(
+            injectState_, XKB_STATE_MODS_LOCKED);
+        mods.group = xkb_state_serialize_layout(
+            injectState_, XKB_STATE_LAYOUT_EFFECTIVE);
+        wlr_seat_keyboard_notify_modifiers(seat_, &mods);
+    }
+    wlr_seat_keyboard_notify_key(
+        seat_, timeMsec, kc - 8,
+        pressed ? WL_KEYBOARD_KEY_STATE_PRESSED
+                : WL_KEYBOARD_KEY_STATE_RELEASED);
+}
+
 // ---- 窗口交互 ----
 
 void Seat::beginMove(View* view) {
@@ -322,9 +475,27 @@ void Seat::focusView(View* view) {
     // 键盘焦点进入目标视图。
     wlr_surface* surface = view->toplevel()->base->surface;
     wlr_keyboard* kb = wlr_seat_get_keyboard(seat_);
-    if (kb != nullptr && surface != nullptr) {
-        wlr_seat_keyboard_notify_enter(seat_, surface,
-            kb->keycodes, kb->num_keycodes, &kb->modifiers);
+    if (surface != nullptr) {
+        if (kb != nullptr && kb != virtualKeyboard_) {
+            wlr_seat_keyboard_notify_enter(seat_, surface,
+                kb->keycodes, kb->num_keycodes, &kb->modifiers);
+        } else {
+            // 无真实键盘（headless/触屏）或虚拟键盘：keymap 由合成键盘
+            // 提供，enter 的修饰键取注入状态（审查 M2——避免 Shift 按住
+            // 时切换焦点把客户端修饰状态清零）。
+            wlr_keyboard_modifiers mods = {};
+            if (injectState_ != nullptr) {
+                mods.depressed = xkb_state_serialize_mods(
+                    injectState_, XKB_STATE_MODS_DEPRESSED);
+                mods.latched = xkb_state_serialize_mods(
+                    injectState_, XKB_STATE_MODS_LATCHED);
+                mods.locked = xkb_state_serialize_mods(
+                    injectState_, XKB_STATE_MODS_LOCKED);
+                mods.group = xkb_state_serialize_layout(
+                    injectState_, XKB_STATE_LAYOUT_EFFECTIVE);
+            }
+            wlr_seat_keyboard_notify_enter(seat_, surface, nullptr, 0, &mods);
+        }
     }
     // 激活状态唯一（M3 任务栏将显示激活高亮）。
     for (View* v : compositor_.views()) {
@@ -339,9 +510,25 @@ void Seat::focusView(View* view) {
 void Seat::focusSurface(wlr_surface* surface, bool deactivateViews) {
     focusedView_ = nullptr;
     wlr_keyboard* kb = wlr_seat_get_keyboard(seat_);
-    if (kb != nullptr && surface != nullptr) {
-        wlr_seat_keyboard_notify_enter(seat_, surface,
-            kb->keycodes, kb->num_keycodes, &kb->modifiers);
+    if (surface != nullptr) {
+        if (kb != nullptr && kb != virtualKeyboard_) {
+            wlr_seat_keyboard_notify_enter(seat_, surface,
+                kb->keycodes, kb->num_keycodes, &kb->modifiers);
+        } else {
+            // 同 focusView：无真实键盘时 enter 修饰键取注入状态（审查 M2）。
+            wlr_keyboard_modifiers mods = {};
+            if (injectState_ != nullptr) {
+                mods.depressed = xkb_state_serialize_mods(
+                    injectState_, XKB_STATE_MODS_DEPRESSED);
+                mods.latched = xkb_state_serialize_mods(
+                    injectState_, XKB_STATE_MODS_LATCHED);
+                mods.locked = xkb_state_serialize_mods(
+                    injectState_, XKB_STATE_MODS_LOCKED);
+                mods.group = xkb_state_serialize_layout(
+                    injectState_, XKB_STATE_LAYOUT_EFFECTIVE);
+            }
+            wlr_seat_keyboard_notify_enter(seat_, surface, nullptr, 0, &mods);
+        }
     }
     if (deactivateViews) {
         // 层表面（如开始菜单）获得输入时所有窗口失活。
@@ -814,6 +1001,19 @@ void Seat::processCursorButton(uint32_t timeMsec, uint32_t button,
                 // 窗口内容区：聚焦所属窗口（xdg 或 XWayland）。
                 View* view = viewAt(lx, ly);
                 if (view != nullptr) {
+                    // 审查 M6：屏幕键盘（E8）点击不夺取键盘焦点——保持原
+                    // 输入目标（Win10 屏幕键盘语义）；按钮点击仍转发给 osk。
+                    if (view->appId() != nullptr
+                            && std::strcmp(view->appId(), "w10osk") == 0) {
+                        // 指针 enter 转发（osk 按钮需要接收点击）。
+                        if (seat_->pointer_state.focused_surface != s) {
+                            wlr_seat_pointer_notify_enter(seat_, s, sx, sy);
+                        }
+                        wlr_seat_pointer_notify_button(seat_, timeMsec,
+                                                       button, state);
+                        pressedButtons_.insert(button);
+                        return;
+                    }
                     focusView(view);
                     compositor_.raiseView(view);
                 } else {
@@ -898,6 +1098,9 @@ void Seat::handleKeyboardDestroy(wl_listener* listener, void* /*data*/) {
     // 不显式清除会使 wlr_seat_get_keyboard 返回悬垂指针（UAF）。
     wlr_seat_set_keyboard(seat->seat_, nullptr);
     seat->keyboard_ = nullptr;
+    // 审查 S2：真实键盘拔除后恢复虚拟键盘绑定（否则新客户端收不到
+    // keymap，注入对新连接失效）。
+    seat->ensureVirtualKeyboard();
     wlr_log(WLR_INFO, "keyboard device removed");
 }
 

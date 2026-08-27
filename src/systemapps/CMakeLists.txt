@@ -457,6 +457,226 @@ file(WRITE "${DEVICES_DESKTOP}"
 install(FILES "${DEVICES_DESKTOP}" DESTINATION share/applications)
 install(TARGETS w10devices RUNTIME DESTINATION bin)
 
+# ---- w10recorder：录音机（可选拓展 E6：libpulse record/playback）----
+add_executable(w10recorder
+    recorder/main.cpp
+    recorder/recorder.cpp
+    recorder/recorderwindow.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/config.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/theme.cpp
+    ${CMAKE_SOURCE_DIR}/src/shell/theme/colors.cpp
+)
+target_include_directories(w10recorder PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/shell   # theme/colors.h
+)
+target_link_libraries(w10recorder PRIVATE
+    Qt6::Widgets
+    Qt6::DBus
+    systemapps_appipc
+)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(PULSE REQUIRED IMPORTED_TARGET libpulse)
+target_link_libraries(w10recorder PRIVATE PkgConfig::PULSE)
+set_target_properties(w10recorder PROPERTIES AUTOMOC ON)
+
+set(RECORDER_DESKTOP "${CMAKE_CURRENT_BINARY_DIR}/w10recorder.desktop")
+file(WRITE "${RECORDER_DESKTOP}"
+    "[Desktop Entry]\n"
+    "Type=Application\n"
+    "Name=录音机\n"
+    "Name[en]=Voice Recorder\n"
+    "Comment=录音与播放（PulseAudio）\n"
+    "Exec=w10recorder\n"
+    "Icon=audio-recorder\n"
+    "Terminal=false\n"
+    "Categories=AudioVideo;Audio;\n"
+    "StartupNotify=true\n")
+install(FILES "${RECORDER_DESKTOP}" DESTINATION share/applications)
+install(TARGETS w10recorder RUNTIME DESTINATION bin)
+
+# ---- w10cleanup：磁盘清理（可选拓展 E7：回收站 + 缓存扫描清理）----
+add_executable(w10cleanup
+    cleanup/main.cpp
+    cleanup/cleanupscanner.cpp
+    cleanup/cleanupwindow.cpp
+    trash/trashstore.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/config.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/theme.cpp
+    ${CMAKE_SOURCE_DIR}/src/shell/theme/colors.cpp
+)
+target_include_directories(w10cleanup PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/shell   # theme/colors.h
+)
+target_link_libraries(w10cleanup PRIVATE
+    Qt6::Widgets
+    Qt6::DBus
+    systemapps_appipc
+)
+set_target_properties(w10cleanup PROPERTIES AUTOMOC ON)
+
+set(CLEANUP_DESKTOP "${CMAKE_CURRENT_BINARY_DIR}/w10cleanup.desktop")
+file(WRITE "${CLEANUP_DESKTOP}"
+    "[Desktop Entry]\n"
+    "Type=Application\n"
+    "Name=磁盘清理\n"
+    "Name[en]=Disk Cleanup\n"
+    "Comment=清理回收站与系统缓存\n"
+    "Exec=w10cleanup\n"
+    "Icon=edit-clear\n"
+    "Terminal=false\n"
+    "Categories=System;Utility;\n"
+    "StartupNotify=true\n")
+install(FILES "${CLEANUP_DESKTOP}" DESTINATION share/applications)
+install(TARGETS w10cleanup RUNTIME DESTINATION bin)
+
+# ---- w10osk：屏幕键盘（可选拓展 E8：D-Bus InputKey 注入）----
+add_executable(w10osk
+    osk/main.cpp
+    osk/osk.cpp
+    osk/oskwindow.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/config.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/theme.cpp
+    ${CMAKE_SOURCE_DIR}/src/shell/theme/colors.cpp
+)
+target_include_directories(w10osk PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/shell   # theme/colors.h
+)
+target_link_libraries(w10osk PRIVATE
+    Qt6::Widgets
+    Qt6::DBus
+    systemapps_appipc
+)
+# keysym 宏（xkbcommon-keysyms.h）仅头文件，无需链接库。
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(XKBCOMMON IMPORTED_TARGET xkbcommon)
+target_link_libraries(w10osk PRIVATE PkgConfig::XKBCOMMON)
+set_target_properties(w10osk PROPERTIES AUTOMOC ON)
+
+set(OSK_DESKTOP "${CMAKE_CURRENT_BINARY_DIR}/w10osk.desktop")
+file(WRITE "${OSK_DESKTOP}"
+    "[Desktop Entry]\n"
+    "Type=Application\n"
+    "Name=屏幕键盘\n"
+    "Name[en]=On-Screen Keyboard\n"
+    "Comment=虚拟键盘（经 compositor 注入按键）\n"
+    "Exec=w10osk\n"
+    "Icon=input-keyboard\n"
+    "Terminal=false\n"
+    "Categories=Utility;Accessibility;\n"
+    "StartupNotify=true\n")
+install(FILES "${OSK_DESKTOP}" DESTINATION share/applications)
+install(TARGETS w10osk RUNTIME DESTINATION bin)
+
+# ---- w10rdp：远程桌面连接（可选拓展 E9：wlfreerdp3/xfreerdp3 封装）----
+# 构建不依赖 freerdp（QProcess 调外部客户端）；运行需安装 freerdp 包。
+add_executable(w10rdp
+    rdp/main.cpp
+    rdp/rdpclient.cpp
+    rdp/rdpwindow.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/config.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/theme.cpp
+    ${CMAKE_SOURCE_DIR}/src/shell/theme/colors.cpp
+)
+target_include_directories(w10rdp PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/shell   # theme/colors.h
+)
+target_link_libraries(w10rdp PRIVATE
+    Qt6::Widgets
+    Qt6::DBus
+    systemapps_appipc
+)
+set_target_properties(w10rdp PROPERTIES AUTOMOC ON)
+
+set(RDP_DESKTOP "${CMAKE_CURRENT_BINARY_DIR}/w10rdp.desktop")
+file(WRITE "${RDP_DESKTOP}"
+    "[Desktop Entry]\n"
+    "Type=Application\n"
+    "Name=远程桌面连接\n"
+    "Name[en]=Remote Desktop Connection\n"
+    "Comment=RDP 客户端（FreeRDP）\n"
+    "Exec=w10rdp\n"
+    "Icon=preferences-desktop-remote-desktop\n"
+    "Terminal=false\n"
+    "Categories=Network;RemoteAccess;\n"
+    "StartupNotify=true\n")
+install(FILES "${RDP_DESKTOP}" DESTINATION share/applications)
+install(TARGETS w10rdp RUNTIME DESTINATION bin)
+
+# ---- w10disks：磁盘管理（可选拓展 E10：sysfs 只读 + udisks 增强）----
+# 构建不依赖 udisks（QDBus 探测，服务缺失自动降级 sysfs）。
+add_executable(w10disks
+    disks/main.cpp
+    disks/diskscanner.cpp
+    disks/diskswindow.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/config.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/theme.cpp
+    ${CMAKE_SOURCE_DIR}/src/shell/theme/colors.cpp
+)
+target_include_directories(w10disks PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/shell   # theme/colors.h
+)
+target_link_libraries(w10disks PRIVATE
+    Qt6::Widgets
+    Qt6::DBus
+    systemapps_appipc
+)
+set_target_properties(w10disks PROPERTIES AUTOMOC ON)
+
+set(DISKS_DESKTOP "${CMAKE_CURRENT_BINARY_DIR}/w10disks.desktop")
+file(WRITE "${DISKS_DESKTOP}"
+    "[Desktop Entry]\n"
+    "Type=Application\n"
+    "Name=磁盘管理\n"
+    "Name[en]=Disk Management\n"
+    "Comment=只读浏览磁盘与分区\n"
+    "Exec=w10disks\n"
+    "Icon=drive-harddisk\n"
+    "Terminal=false\n"
+    "Categories=System;Utility;\n"
+    "StartupNotify=true\n")
+install(FILES "${DISKS_DESKTOP}" DESTINATION share/applications)
+install(TARGETS w10disks RUNTIME DESTINATION bin)
+
+# ---- w10calendar：日历（可选拓展 E11：月视图 + 事件 CRUD）----
+add_executable(w10calendar
+    calendar/main.cpp
+    calendar/eventstore.cpp
+    calendar/calendarwindow.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/config.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/theme.cpp
+    ${CMAKE_SOURCE_DIR}/src/shell/theme/colors.cpp
+)
+target_include_directories(w10calendar PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/shell   # theme/colors.h
+)
+target_link_libraries(w10calendar PRIVATE
+    Qt6::Widgets
+    Qt6::DBus
+    systemapps_appipc
+)
+set_target_properties(w10calendar PROPERTIES AUTOMOC ON)
+
+set(CALENDAR_DESKTOP "${CMAKE_CURRENT_BINARY_DIR}/w10calendar.desktop")
+file(WRITE "${CALENDAR_DESKTOP}"
+    "[Desktop Entry]\n"
+    "Type=Application\n"
+    "Name=日历\n"
+    "Name[en]=Calendar\n"
+    "Comment=月视图与事件管理\n"
+    "Exec=w10calendar\n"
+    "Icon=office-calendar\n"
+    "Terminal=false\n"
+    "Categories=Office;Calendar;\n"
+    "StartupNotify=true\n")
+install(FILES "${CALENDAR_DESKTOP}" DESTINATION share/applications)
+install(TARGETS w10calendar RUNTIME DESTINATION bin)
+
 # ---- w10tasks：任务计划程序（WIN10-GAP G5：cron 等价 GUI + 调度守护）----
 # 双模式：GUI（w10tasks）管理任务；--daemon 常驻每分钟检查执行
 #（会话 w10-session 拉起；D-Bus org.w10de.Tasks Reload）。

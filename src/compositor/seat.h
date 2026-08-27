@@ -86,6 +86,16 @@ public:
     // headless 验证：显示 Snap 布局选择器（--snaplayout-test 帧钩子）。
     void debugShowSnapLayout();
 
+    // ---- 虚拟键盘注入（E8 屏幕键盘：CompositorDbus::InputKey）----
+    // keysym → keycode（真实键盘 keymap 反查；无真实键盘用默认 us keymap
+    // 并给 seat 通知 keymap）→ wlr_seat 键盘通知。修饰键更新经
+    // notify_modifiers 同步到 xkb state。
+    void injectKey(uint32_t keysym, bool pressed);
+    // keysym → keycode 反查（headless 自测可测；无效返回 XKB_KEYCODE_INVALID）。
+    static xkb_keycode_t keysymToKeycode(xkb_keymap* kmap, xkb_keysym_t sym);
+    // 无真实键盘时确保合成虚拟键盘已建并绑定 seat（客户端获得 keymap）。
+    void ensureVirtualKeyboard();
+
     wlr_seat* seat() const { return seat_; }
 
 private:
@@ -133,6 +143,20 @@ private:
     wlr_cursor* cursor_ = nullptr;
     wlr_xcursor_manager* cursorMgr_ = nullptr;
     wlr_keyboard* keyboard_ = nullptr;
+
+    // E8：默认 keymap（无真实键盘时虚拟注入用）+ 所属 xkb context。
+    xkb_context* xkbContext_ = nullptr;
+    xkb_keymap* defaultKeymap_ = nullptr;
+    // 无真实键盘时合成虚拟 wlr_keyboard 绑定 seat（客户端借此收到 keymap，
+    // wlr 0.19 无 wlr_seat_keyboard_notify_keymap）。
+    wlr_keyboard* virtualKeyboard_ = nullptr;
+    // 注入修饰键跟踪：wlr 0.19 的 seat keyboard_state 无 xkb_state，
+    // 虚拟注入的 Shift/Ctrl/Alt 状态由独立 xkb_state 维护（真实键盘
+    // 混合场景下修饰键以注入侧为准——屏幕键盘主场景为无实体键盘）。
+    xkb_state* injectState_ = nullptr;
+    // 审查 M3：injectState_ 所属 keymap（keymap 变化时重建）。
+    xkb_keymap* injectStateKeymap_ = nullptr;
+    bool keymapNotified_ = false;
 
     View* focusedView_ = nullptr;
     // M2b hover 打磨：当前 hover 的视图（装饰按钮高亮跟踪）。

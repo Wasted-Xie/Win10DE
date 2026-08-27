@@ -406,8 +406,13 @@ Linux 上的 Windows 10 风格桌面环境，从零实现。
         `w10charmap` 字符映射表（12 Unicode 区块 + 剪贴板）、`w10clock`
         闹钟和时钟（世界时钟/计时器/秒表/闹钟）；全部 appipc 单实例 +
         .desktop；selftest 全 PASS + headless 渲染 5/5，见
-        docs/WIN10-GAP.md 2.1；录音机/媒体播放器/磁盘清理/屏幕键盘/
-        远程桌面/磁盘管理/日历完整 待后续按需）
+        docs/WIN10-GAP.md 2.1）→ **可选拓展 E6-E11 ✅**（`w10recorder` 录音机
+        libpulse 录音/播放 + WAV 落盘、`w10cleanup` 磁盘清理（回收站/缓存/symlink
+        安全）、`w10osk` 屏幕键盘（Qt 键盘 + compositor InputKey D-Bus 注入，
+        端到端按键验证）、`w10rdp` 远程桌面（FreeRDP 3.x 封装，IPv6/引号/权限安全）、
+        `w10disks` 磁盘管理（sysfs/udisks 只读浏览）、`w10calendar` 日历完整版
+        （月视图 + 事件 CRUD）；六项 selftest PASS + 渲染 PASS + 审查修复，
+        见 docs/WIN10-GAP.md 2.2）
 - [x] 编译与冒烟验证（headless 运行 + 截图 + 像素校验，2026-08 Arch/WSL2 通过）
 - [x] 完整渲染验证（compositor + w10shell 同跑：桌面壁纸渐变 + 任务栏渲染成功，2026-08）
 - [ ] 真机/嵌套环境验证（DRM、XWayland 运行时、鼠标键盘实际交互）

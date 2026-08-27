@@ -185,14 +185,18 @@ L4 补足格中的"今天"不画圆（非当月一律灰字）；L5 翻月后 ho
 | E3 写字板 | 写字板 | 富文本 | QTextEdit 富文本模式（✅ 见 2.1） |
 | E4 字符映射表 | charmap | 特殊字符插入 | 纯 Qt 表格（✅ 见 2.1） |
 | E5 闹钟和时钟 | Win10 闹钟 | 世界时钟/计时器/秒表/闹钟 | 纯 Qt 小应用（✅ 见 2.1） |
-| 录音机 | Win10 录音机 | 录音 + 播放 | libpulse record |
+| 录音机 | Win10 录音机 | 录音 + 播放 | libpulse record（✅ E6 见 2.2） |
 | 媒体播放器 | Groove/电影和电视 | 音视频播放 | mpv 后端或 QtMultimedia |
-| 远程桌面 | 远程桌面连接 | RDP 客户端 | 封装 xfreerdp |
-| 磁盘清理 | 磁盘清理 | 垃圾清理 | gio trash + 缓存扫描 |
-| 磁盘管理 | 磁盘管理 | 分区查看 | udisks 只读 |
-| 屏幕键盘 | 轻松使用 | 虚拟键盘 | Qt 实现 |
-| 日历（完整） | 日历应用 | 月视图 + 事件 | G6 后扩展（需日历服务） |
+| 远程桌面 | 远程桌面连接 | RDP 客户端 | 封装 wlfreerdp3/xfreerdp3（✅ E9 见 2.2） |
+| 磁盘清理 | 磁盘清理 | 垃圾清理 | Trash 清空 + 缓存扫描（✅ E7 见 2.2） |
+| 磁盘管理 | 磁盘管理 | 分区查看 | udisks/sysfs 只读（✅ E10 见 2.2） |
+| 屏幕键盘 | 轻松使用 | 虚拟键盘 | Qt + compositor 注入（✅ E8 见 2.2） |
+| 日历（完整） | 日历应用 | 月视图 + 事件 | 事件存储 + CRUD（✅ E11 见 2.2） |
 | 邮件/人脉 | 邮件/人脉 | 需服务端 | MVP 难做（IMAP/Caldav） |
+
+> 可选拓展批次（goal 5c530aa6）：E6-E11 已完成（✅ 见 2.2），
+> 外部依赖处理：E6 libpulse（已装）、E9 freerdp（运行需安装，构建不依赖）、
+> E10 udisks2（服务缺失自动降级 sysfs）。
 
 ## 2.1 可选拓展完成详情（E1-E5）
 
@@ -212,6 +216,48 @@ L4 补足格中的"今天"不画圆（非当月一律灰字）；L5 翻月后 ho
 不追加/中文整段误选加粗/关闭不确认 → toLower 判定 + 补 .html + 无选区仅设后续格式 +
 closeEvent 确认；E4 charToCodepoint 非 BMP 代理单元/复制含占位符/标签文案 → toUcs4 +
 排除"·" + 修正。
+
+## 2.2 可选拓展完成详情（E6-E11）
+
+> 批次（goal 5c530aa6）：录音机/磁盘清理/屏幕键盘/远程桌面/磁盘管理/日历完整版。
+> 外部依赖：E6 libpulse（系统已有）；E9 freerdp（运行需安装，构建不依赖，缺失时 UI 降级提示）；
+> E10 udisks2（服务缺失自动降级 sysfs，构建不依赖）。全部：编译通过 + selftest PASS +
+> headless 渲染 PASS + appipc 单实例 + .desktop 注册。
+
+| 项 | 应用 | 实现 | 验证 |
+|----|------|------|------|
+| E6 录音机 | `w10recorder` | libpulse 引擎（pa_mainloop + QTimer pump 单线程，同 audioinfo 模式）：录音固定 S16LE 44100 单声道 → buildWav 组装落盘 `~/Documents/Sound recordings/录音 <时间戳>.wav`；播放解析 WAV → PA_STREAM_PLAYBACK + drain；录音 RMS 电平条；历史列表（全文件解析得时长）+ 播放/删除；--record-test CLI 端到端 | selftest 5 项（WAV 头字节级/往返/拒绝/时长格式化/文件名）PASS + 渲染（白圆按钮+红点）PASS + 端到端 PASS（system pulseaudio + 匿名认证配置 + pacat 正弦波播到 null-sink → 录 monitor 143KB 非零 PCM） |
+| E7 磁盘清理 | `w10cleanup` | 类别：回收站（复用 TrashStore::empty）+ 用户缓存 ~/.cache（单遍遍历总大小+top5 细分）+ 缩略图 + /tmp（仅显示）；清理保留目录本身、不跟随 symlink（自实现递归删除）；home/trash 可注入；确认框 + 失败弹窗 + 权限收紧 | selftest 6 项（formatSize/dirSize/扫描/回收站清理/缓存清理/symlink 安全——链接目标不误删）PASS + 渲染 PASS |
+| E8 屏幕键盘 | `w10osk` | Qt 虚拟键盘（5 行 16 列：字母/数字/标点/方向/修饰，Shift/CapsLock 层切换）→ D-Bus InputKey(keysym, pressed) 注入；compositor 侧 Seat::injectKey（keysym→keycode 反查，真实键盘 keymap 或无键盘默认 us）+ 合成虚拟 wlr_keyboard 广播 keymap + 独立 xkb_state 跟踪修饰键 + 无键盘 focus enter；osk 窗口点击不夺键盘焦点 | selftest 4 项（布局行数/键覆盖度/shift 层/修饰判定）PASS + 渲染 PASS + 端到端 PASS（headless compositor + D-Bus 注入 → Wayland 客户端收到 keycode 30/'a' 与 42/Shift + MODS depressed=1） |
+| E9 远程桌面 | `w10rdp` | FreeRDP 3.x 封装（QProcess 参数数组无 shell 注入）：优先 wlfreerdp3（Wayland 原生）→ xfreerdp3；表单（主机/端口/用户名/密码/分辨率/全屏）+ 保存（INI，密码可选持久化 0600 权限）；IPv6 加方括号、空格值引号包裹、特殊字符拒绝；无客户端降级提示；--dry-run 打码打印 | selftest 4 项（校验/buildArgs/配置往返/IPv6 与引号）+ dry-run PASS（/v:[2001:db8::1]:3390）+ 渲染 PASS；wlfreerdp3 已弃用（SDL3 替代）记录 |
+| E10 磁盘管理 | `w10disks` | 只读浏览：sysfs 整盘/分区（partition 文件判定）+ /proc/mounts 挂载点/文件系统；udisks2 D-Bus 增强卷标（可用性探测一次 + 500ms 超时，缺失降级）；左树（驱动器→分区）+ 右详情表；deriveParent 处理 sd/NVMe/mmc 命名；虚拟设备过滤；无写操作 | selftest 4 项（formatBytes/deriveParent/挂载解析/真实扫描 4 盘 1.1TB）PASS + 渲染 PASS |
+| E11 日历完整版 | `w10calendar` | 月视图 42 格（周日起始，前后月补位，今天绿描边，有事件日期 • 标记）+ 右侧当日事件列表；事件存储 ~/.config/w10de/calendar.ini（QSettings 数组，id 自增，add/update/remove 全量重写，全天/时间/标题/说明）；新建/编辑/删除对话框；翻月选中归一化；选中互斥 | selftest 2 项（月历网格含跨年对齐/事件存储 CRUD/排序/月份聚合/损坏 INI 容错/空标题拒绝）PASS + 渲染 PASS |
+
+**子代理审查修复（E6-E11）**：
+E6 S1 流外部终结指针悬挂 → 流 state 回调 FAILED/TERMINATED 释放；S2 drain 竞态 double-unref →
+保存 drain op，stop 先 cancel；S3 列表时长全错（只读 4096 头）→ 读全文件；S4 device 悬垂 → 作用域
+QByteArray；M1 parseWav 大 len 回绕 → qint64；M2 drain 先清状态再 emit；M4 录音中禁播；M5 write 帧对齐+查返回值。
+E7 S1 清理失败静默（rescan 吞状态）→ 弹窗兜底 + 独立状态栏；S2 嵌套 symlink 越界删除（Qt 6.11
+removeRecursively 跟随链接）→ 自实现不跟随递归；M2 clean 白名单 API 内强制（按 id 重建路径）；
+M1 单遍遍历；L1 symlink 判定顺序；L9 usercache/thumbnails 勾选联动。
+E8 S1 合成键盘 calloc 后 keymap_fd=0 → close(0) 关 stdin → 显式置 -1；S2 真实键盘热插拔后虚拟
+键盘不重绑 → handleKeyboardDestroy 重绑；M1 Ctrl/Alt 瞬时 press 组合键不可用 → toggle 保持；
+M2 enter 修饰键恒 0 → 注入状态 serialize；M3 injectState 随 keymap 重建；M4/M5 注入失败反馈与回滚；
+M6 点击 osk 夺焦点 → compositor 对 w10osk app_id 跳过键盘聚焦。
+E9 H1 stop 异步 kill 后 start 静默失败 → kill 后 waitForFinished + start 断言；M1 IPv6 方括号 +
+主机白名单；M2 FreeRDP 二次解析特殊字符 → 拒绝 /: 引号 + 空格引号包裹（实测 wlfreerdp3 接受）；
+M3 密码明文 0644 → setPermissions 0600；M4 savePassword 持久化；M5 进程输出转发防缓存；M6 目录
+mkpath + 写入状态检查；M7 dry-run 密码打码。
+E10 S1 NVMe 父盘推导错误（nvme0n1p1→nvme0n1p，主流环境分区全丢）→ deriveParent 先剥数字再剥 p
++ 纯函数 + 告警；M1 udisks 每分区重建接口 + 25s 超时 → 可用性探测一次 + 500ms；M2 重复 addItem；
+M3 补 deriveParent 单测。
+E11 M1 日期格选中无互斥 → QButtonGroup；M2 update 不存在 id 静默成功 → found 检查；M3 翻月后
+选中出格 → 归一化；M4 selftest 补跨年/损坏 INI/空标题；S2/S3 环境变量覆盖与存储层空标题校验。
+
+已知简化（文档记录）：E6 长录音全内存缓冲；E9 wlfreerdp3 已弃用（Arch 提供 SDL3 客户端替代，
+后续可切换 sdl-freerdp3）、密码进程参数可见（ps aux，FreeRDP 固有）；E8 无真实键盘时合成键盘
+场景修饰键以注入侧为准（真实键盘混合场景限制）；E10 每分区多挂载点只显示一个、/proc/mounts
+八进制转义未处理；E11 无系统通知提醒（MVP 仅应用内列表）。
 
 ## 3. 已评估不做（超范围/生态不同）
 
