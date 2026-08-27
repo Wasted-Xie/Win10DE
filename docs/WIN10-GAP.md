@@ -176,21 +176,42 @@ L4 补足格中的"今天"不画圆（非当月一律灰字）；L5 翻月后 ho
 
 ## 2. 未立项（缺失功能，按价值排序）
 
+> 可选拓展批次（goal b9faa5e5）：E1-E5 已立项（纯 Qt、无外部依赖、headless 可验证）。
+
 | 功能 | 对标 | 说明 | 建议 |
 |------|------|------|------|
-| 画图 | Win10 画图 | 图像编辑器 | Qt QPainter 基础版（打开/绘制/保存） |
-| 闹钟和时钟 | Win10 闹钟 | 世界时钟/计时器/秒表/闹钟 | 纯 Qt 小应用 |
+| E1 便笺 | Win10 便笺 | 置顶便签 | QTextEdit 轻量实现（✅ 见 2.1） |
+| E2 画图 | Win10 画图 | 图像编辑器 | Qt QPainter 基础版（打开/绘制/保存）（✅ 见 2.1） |
+| E3 写字板 | 写字板 | 富文本 | QTextEdit 富文本模式（✅ 见 2.1） |
+| E4 字符映射表 | charmap | 特殊字符插入 | 纯 Qt 表格（✅ 见 2.1） |
+| E5 闹钟和时钟 | Win10 闹钟 | 世界时钟/计时器/秒表/闹钟 | 纯 Qt 小应用（✅ 见 2.1） |
 | 录音机 | Win10 录音机 | 录音 + 播放 | libpulse record |
 | 媒体播放器 | Groove/电影和电视 | 音视频播放 | mpv 后端或 QtMultimedia |
-| 便笺 | Sticky Notes | 置顶便签 | QTextEdit 轻量实现 |
-| 字符映射表 | charmap | 特殊字符插入 | 纯 Qt 表格 |
-| 写字板 | 写字板 | 富文本 | QTextEdit 富文本模式 |
 | 远程桌面 | 远程桌面连接 | RDP 客户端 | 封装 xfreerdp |
 | 磁盘清理 | 磁盘清理 | 垃圾清理 | gio trash + 缓存扫描 |
 | 磁盘管理 | 磁盘管理 | 分区查看 | udisks 只读 |
 | 屏幕键盘 | 轻松使用 | 虚拟键盘 | Qt 实现 |
 | 日历（完整） | 日历应用 | 月视图 + 事件 | G6 后扩展（需日历服务） |
 | 邮件/人脉 | 邮件/人脉 | 需服务端 | MVP 难做（IMAP/Caldav） |
+
+## 2.1 可选拓展完成详情（E1-E5）
+
+| 项 | 应用 | 实现 | 验证 |
+|----|------|------|------|
+| E1 便笺 | `w10sticky` | 无边框半透明置顶便签（黄底 #FFF9C4）+ 顶部拖动条 + QTextEdit 全窗编辑 + 500ms 防抖保存（~/.config/w10de/sticky/note-<毫秒>.txt 每张一文件）+ --list 列表窗口（新建/打开/删除） | selftest 3 项（路径唯一/读写往返含中文/列表排序）PASS + 渲染（黄底 12770）PASS |
+| E2 画图 | `w10paint` | 白画布 + 工具（画笔/橡皮/直线/矩形/椭圆）+ 预置色板 + 粗细 + 新建/打开/保存 PNG；绘制核心（paintDot/paintLine/paintRect/paintEllipse）为可测静态函数 | selftest 2 项（绘制像素断言/PNG 往返）PASS + 渲染（白画布 85156）PASS |
+| E3 写字板 | `w10pad` | QTextEdit 富文本 + 打开（.txt 纯文本/.html 富文本）+ 保存（按扩展名 HTML/纯文本）+ B/I/U 格式按钮 | selftest 2 项（HTML 往返含粗体/文件级往返）PASS + 渲染（白编辑区 68443）PASS |
+| E4 字符映射表 | `w10charmap` | Unicode 区块下拉（12 块：拉丁/希腊/西里尔/标点/箭头/制表/几何/杂项符号/CJK 等）+ 16 列表格（码点/字符）+ 点击详情（U+ 码点/UTF-8 字节）+ 复制剪贴板 | selftest 2 项（码点↔字符映射含表情符号/代理区拒绝 + 区块边界）PASS + 渲染（白底 60922）PASS |
+| E5 闹钟和时钟 | `w10clock` | 四 tab：世界时钟（本地/北京/伦敦/纽约/东京/悉尼，QTimeZone）/计时器（倒计时 + 到点 beep）/秒表（启动/暂停/计次/复位）/闹钟（列表 + 同分钟去重触发） | selftest 3 项（倒计时/alarmDue 去重与时区偏移 +8）PASS + 渲染（亮文字 53907）PASS |
+
+全部：编译通过 + selftest PASS + headless 渲染 PASS + appipc 单实例（注册 org.w10de.Apps.Sticky/Paint/Pad/Charmap/Clock）+ .desktop 注册。
+**子代理审查修复（E1-E5）**：S1 便笺无边框拖动失效（QTextEdit 全窗吞事件）→ 事件过滤器
+拦截顶部 24px 拖动条；M1 闹钟跨天失效（分钟键无日期）→ key 含 yyyyMMdd HH:mm；M2 计时器
+暂停→启动重新开始（丢已过时间）→ remainingMs_ 恢复；E2 保存后标题星号不消失/扩展名
+重复追加/0 尺寸形状置脏 → updateTitle() 统一 + 后缀判断 + 跳过；E3 扩展名大小写/无后缀
+不追加/中文整段误选加粗/关闭不确认 → toLower 判定 + 补 .html + 无选区仅设后续格式 +
+closeEvent 确认；E4 charToCodepoint 非 BMP 代理单元/复制含占位符/标签文案 → toUcs4 +
+排除"·" + 修正。
 
 ## 3. 已评估不做（超范围/生态不同）
 

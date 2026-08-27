@@ -493,3 +493,175 @@ file(WRITE "${TASKS_DESKTOP}"
     "StartupNotify=true\n")
 install(FILES "${TASKS_DESKTOP}" DESTINATION share/applications)
 install(TARGETS w10tasks RUNTIME DESTINATION bin)
+
+# ---- w10sticky：便笺（可选拓展 E1：置顶便签，QTextEdit 轻量）----
+add_executable(w10sticky
+    sticky/main.cpp
+    sticky/stickywindow.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/config.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/theme.cpp
+    ${CMAKE_SOURCE_DIR}/src/shell/theme/colors.cpp
+)
+target_include_directories(w10sticky PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/shell   # theme/colors.h
+)
+target_link_libraries(w10sticky PRIVATE
+    Qt6::Widgets
+    Qt6::DBus
+    systemapps_appipc
+)
+set_target_properties(w10sticky PROPERTIES AUTOMOC ON)
+
+set(STICKY_DESKTOP "${CMAKE_CURRENT_BINARY_DIR}/w10sticky.desktop")
+file(WRITE "${STICKY_DESKTOP}"
+    "[Desktop Entry]\n"
+    "Type=Application\n"
+    "Name=便笺\n"
+    "Name[en]=Sticky Notes\n"
+    "Comment=置顶便签\n"
+    "Exec=w10sticky\n"
+    "Icon=appointment-new\n"
+    "Terminal=false\n"
+    "Categories=Utility;TextEditor;\n"
+    "StartupNotify=true\n")
+install(FILES "${STICKY_DESKTOP}" DESTINATION share/applications)
+install(TARGETS w10sticky RUNTIME DESTINATION bin)
+
+# ---- w10paint：画图（可选拓展 E2：QPainter 打开/绘制/保存 PNG）----
+add_executable(w10paint
+    paint/main.cpp
+    paint/paintwindow.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/config.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/theme.cpp
+    ${CMAKE_SOURCE_DIR}/src/shell/theme/colors.cpp
+)
+target_include_directories(w10paint PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/shell   # theme/colors.h
+)
+target_link_libraries(w10paint PRIVATE
+    Qt6::Widgets
+    Qt6::DBus
+    systemapps_appipc
+)
+set_target_properties(w10paint PROPERTIES AUTOMOC ON)
+
+set(PAINT_DESKTOP "${CMAKE_CURRENT_BINARY_DIR}/w10paint.desktop")
+file(WRITE "${PAINT_DESKTOP}"
+    "[Desktop Entry]\n"
+    "Type=Application\n"
+    "Name=画图\n"
+    "Name[en]=Paint\n"
+    "Comment=绘图（画笔/形状/颜色）\n"
+    "Exec=w10paint\n"
+    "Icon=applications-graphics\n"
+    "Terminal=false\n"
+    "Categories=Graphics;Painting;\n"
+    "MimeType=image/png;image/jpeg;image/bmp;\n"
+    "StartupNotify=true\n")
+install(FILES "${PAINT_DESKTOP}" DESTINATION share/applications)
+install(TARGETS w10paint RUNTIME DESTINATION bin)
+
+# ---- w10pad：写字板（可选拓展 E3：QTextEdit 富文本）----
+add_executable(w10pad
+    pad/main.cpp
+    pad/padwindow.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/config.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/theme.cpp
+    ${CMAKE_SOURCE_DIR}/src/shell/theme/colors.cpp
+)
+target_include_directories(w10pad PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/shell   # theme/colors.h
+)
+target_link_libraries(w10pad PRIVATE
+    Qt6::Widgets
+    Qt6::DBus
+    systemapps_appipc
+)
+set_target_properties(w10pad PROPERTIES AUTOMOC ON)
+
+set(PAD_DESKTOP "${CMAKE_CURRENT_BINARY_DIR}/w10pad.desktop")
+file(WRITE "${PAD_DESKTOP}"
+    "[Desktop Entry]\n"
+    "Type=Application\n"
+    "Name=写字板\n"
+    "Name[en]=WordPad\n"
+    "Comment=富文本编辑器\n"
+    "Exec=w10pad\n"
+    "Icon=accessories-text-editor\n"
+    "Terminal=false\n"
+    "Categories=Utility;TextEditor;\n"
+    "MimeType=text/plain;text/html;\n"
+    "StartupNotify=true\n")
+install(FILES "${PAD_DESKTOP}" DESTINATION share/applications)
+install(TARGETS w10pad RUNTIME DESTINATION bin)
+
+# ---- w10charmap：字符映射表（可选拓展 E4：Unicode 区块浏览）----
+add_executable(w10charmap
+    charmap/main.cpp
+    charmap/charmapwindow.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/config.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/theme.cpp
+    ${CMAKE_SOURCE_DIR}/src/shell/theme/colors.cpp
+)
+target_include_directories(w10charmap PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/shell   # theme/colors.h
+)
+target_link_libraries(w10charmap PRIVATE
+    Qt6::Widgets
+    Qt6::DBus
+    systemapps_appipc
+)
+set_target_properties(w10charmap PROPERTIES AUTOMOC ON)
+
+set(CHARMAP_DESKTOP "${CMAKE_CURRENT_BINARY_DIR}/w10charmap.desktop")
+file(WRITE "${CHARMAP_DESKTOP}"
+    "[Desktop Entry]\n"
+    "Type=Application\n"
+    "Name=字符映射表\n"
+    "Name[en]=Character Map\n"
+    "Comment=特殊字符浏览与复制\n"
+    "Exec=w10charmap\n"
+    "Icon=accessories-character-map\n"
+    "Terminal=false\n"
+    "Categories=Utility;TextEditor;\n"
+    "StartupNotify=true\n")
+install(FILES "${CHARMAP_DESKTOP}" DESTINATION share/applications)
+install(TARGETS w10charmap RUNTIME DESTINATION bin)
+
+# ---- w10clock：闹钟和时钟（可选拓展 E5：世界时钟/计时器/秒表/闹钟）----
+add_executable(w10clock
+    clock/main.cpp
+    clock/clockwindow.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/config.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/theme.cpp
+    ${CMAKE_SOURCE_DIR}/src/shell/theme/colors.cpp
+)
+target_include_directories(w10clock PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/shell   # theme/colors.h
+)
+target_link_libraries(w10clock PRIVATE
+    Qt6::Widgets
+    Qt6::DBus
+    systemapps_appipc
+)
+set_target_properties(w10clock PROPERTIES AUTOMOC ON)
+
+set(CLOCK_DESKTOP "${CMAKE_CURRENT_BINARY_DIR}/w10clock.desktop")
+file(WRITE "${CLOCK_DESKTOP}"
+    "[Desktop Entry]\n"
+    "Type=Application\n"
+    "Name=闹钟和时钟\n"
+    "Name[en]=Alarms & Clock\n"
+    "Comment=世界时钟/计时器/秒表/闹钟\n"
+    "Exec=w10clock\n"
+    "Icon=appointment-new\n"
+    "Terminal=false\n"
+    "Categories=Utility;Clock;\n"
+    "StartupNotify=true\n")
+install(FILES "${CLOCK_DESKTOP}" DESTINATION share/applications)
+install(TARGETS w10clock RUNTIME DESTINATION bin)

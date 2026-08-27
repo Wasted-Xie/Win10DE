@@ -400,7 +400,14 @@ Linux 上的 Windows 10 风格桌面环境，从零实现。
         闰年/42 格/2026-08-01 索引 5/首列周一/连续）+ --calendar-render
         渲染 PASS（今天蓝圆 3444/面板 17692）+ w10shell 完整渲染回归无破坏；
         已知简化：无事件/农历，见 docs/WIN10-GAP.md 1.6）——**G6 完成，
-        WIN10-GAP 6 项全部 ✅**
+        WIN10-GAP 6 项全部 ✅** → **可选拓展 E1-E5 ✅**（纯 Qt 五应用：
+        `w10sticky` 便笺（置顶便签 + 防抖保存 + 列表）、`w10paint` 画图
+        （画笔/形状/色板/PNG）、`w10pad` 写字板（富文本 HTML/TXT）、
+        `w10charmap` 字符映射表（12 Unicode 区块 + 剪贴板）、`w10clock`
+        闹钟和时钟（世界时钟/计时器/秒表/闹钟）；全部 appipc 单实例 +
+        .desktop；selftest 全 PASS + headless 渲染 5/5，见
+        docs/WIN10-GAP.md 2.1；录音机/媒体播放器/磁盘清理/屏幕键盘/
+        远程桌面/磁盘管理/日历完整 待后续按需）
 - [x] 编译与冒烟验证（headless 运行 + 截图 + 像素校验，2026-08 Arch/WSL2 通过）
 - [x] 完整渲染验证（compositor + w10shell 同跑：桌面壁纸渐变 + 任务栏渲染成功，2026-08）
 - [ ] 真机/嵌套环境验证（DRM、XWayland 运行时、鼠标键盘实际交互）
