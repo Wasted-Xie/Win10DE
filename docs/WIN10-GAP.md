@@ -231,7 +231,7 @@ closeEvent 确认；E4 charToCodepoint 非 BMP 代理单元/复制含占位符/�
 | E8 屏幕键盘 | `w10osk` | Qt 虚拟键盘（5 行 16 列：字母/数字/标点/方向/修饰，Shift/CapsLock 层切换）→ D-Bus InputKey(keysym, pressed) 注入；compositor 侧 Seat::injectKey（keysym→keycode 反查，真实键盘 keymap 或无键盘默认 us）+ 合成虚拟 wlr_keyboard 广播 keymap + 独立 xkb_state 跟踪修饰键 + 无键盘 focus enter；osk 窗口点击不夺键盘焦点 | selftest 4 项（布局行数/键覆盖度/shift 层/修饰判定）PASS + 渲染 PASS + 端到端 PASS（headless compositor + D-Bus 注入 → Wayland 客户端收到 keycode 30/'a' 与 42/Shift + MODS depressed=1） |
 | E9 远程桌面 | `w10rdp` | FreeRDP 3.x 封装（QProcess 参数数组无 shell 注入）：优先 wlfreerdp3（Wayland 原生）→ xfreerdp3；表单（主机/端口/用户名/密码/分辨率/全屏）+ 保存（INI，密码可选持久化 0600 权限）；IPv6 加方括号、空格值引号包裹、特殊字符拒绝；无客户端降级提示；--dry-run 打码打印 | selftest 4 项（校验/buildArgs/配置往返/IPv6 与引号）+ dry-run PASS（/v:[2001:db8::1]:3390）+ 渲染 PASS；wlfreerdp3 已弃用（SDL3 替代）记录 |
 | E10 磁盘管理 | `w10disks` | 只读浏览：sysfs 整盘/分区（partition 文件判定）+ /proc/mounts 挂载点/文件系统；udisks2 D-Bus 增强卷标（可用性探测一次 + 500ms 超时，缺失降级）；左树（驱动器→分区）+ 右详情表；deriveParent 处理 sd/NVMe/mmc 命名；虚拟设备过滤；无写操作 | selftest 4 项（formatBytes/deriveParent/挂载解析/真实扫描 4 盘 1.1TB）PASS + 渲染 PASS |
-| E11 日历完整版 | `w10calendar` | 月视图 42 格（周日起始，前后月补位，今天绿描边，有事件日期 • 标记）+ 右侧当日事件列表；事件存储 ~/.config/w10de/calendar.ini（QSettings 数组，id 自增，add/update/remove 全量重写，全天/时间/标题/说明）；新建/编辑/删除对话框；翻月选中归一化；选中互斥 | selftest 2 项（月历网格含跨年对齐/事件存储 CRUD/排序/月份聚合/损坏 INI 容错/空标题拒绝）PASS + 渲染 PASS |
+| E11 日历完整版 | `w10calendar` | 月视图 42 格（周日起始，前后月补位，今天绿描边，有事件日期 • 标记）+ 右侧当日事件列表；事件存储 ~/.config/w10de/calendar.ini（QSettings 数组，id 自增，add/update/remove 全量重写，全天/时间/标题/说明）；新建/编辑/删除对话框；翻月选中归一化；选中互斥；**事件提醒**：每分钟检查当天事件（准点 + 全天每日一次，运行期去重），libnotify（org.freedesktop.Notifications）系统通知优先，无通知服务时应用内状态提示 + 提示音降级 | selftest 4 项（月历网格含跨年对齐/事件存储 CRUD/排序/月份聚合/提醒判定去重与全天排除/损坏 INI 容错/空标题拒绝）PASS + 渲染 PASS + --reminder-test 端到端 PASS（注入当前分钟事件 → 提醒触发） |
 
 **子代理审查修复（E6-E11）**：
 E6 S1 流外部终结指针悬挂 → 流 state 回调 FAILED/TERMINATED 释放；S2 drain 竞态 double-unref →
@@ -257,7 +257,7 @@ E11 M1 日期格选中无互斥 → QButtonGroup；M2 update 不存在 id 静默
 已知简化（文档记录）：E6 长录音全内存缓冲；E9 wlfreerdp3 已弃用（Arch 提供 SDL3 客户端替代，
 后续可切换 sdl-freerdp3）、密码进程参数可见（ps aux，FreeRDP 固有）；E8 无真实键盘时合成键盘
 场景修饰键以注入侧为准（真实键盘混合场景限制）；E10 每分区多挂载点只显示一个、/proc/mounts
-八进制转义未处理；E11 无系统通知提醒（MVP 仅应用内列表）。
+八进制转义未处理；E11 提醒在应用运行期间生效（不常驻后台 daemon；全天事件跨运行不持久化去重）。
 
 ## 3. 已评估不做（超范围/生态不同）
 

@@ -35,6 +35,28 @@ QList<Cell> monthCells(int year, int month) {
     return cells;
 }
 
+// ---- 提醒判定 ----
+
+QList<CalendarEvent> dueEvents(const QList<CalendarEvent>& events,
+                               const QString& nowTime,
+                               QSet<QString>* notified) {
+    QList<CalendarEvent> due;
+    if (notified == nullptr) {
+        return due;
+    }
+    for (const CalendarEvent& e : events) {
+        if (e.time.isEmpty()) continue;  // 全天事件不在此列
+        if (e.time != nowTime) continue;
+        // 审查 S1：去重键含 date/time（改期后重新提醒）。
+        const QString key = e.date + QLatin1Char('|') + e.time
+            + QLatin1Char('|') + QString::number(e.id);
+        if (notified->contains(key)) continue;
+        notified->insert(key);
+        due.append(e);
+    }
+    return due;
+}
+
 // ---- 事件存储 ----
 
 namespace {
@@ -101,6 +123,51 @@ QStringList EventStore::monthDates(int year, int month) const {
     QStringList list = dates.values();
     std::sort(list.begin(), list.end());
     return list;
+}
+
+QList<CalendarEvent> EventStore::eventsAtTime(const QString& date,
+                                              const QString& time) const {
+    QList<CalendarEvent> result;
+    QSettings s(configPath_, QSettings::IniFormat);
+    const int count = s.beginReadArray(QStringLiteral("events"));
+    for (int i = 0; i < count; ++i) {
+        s.setArrayIndex(i);
+        const QString d = s.value(QStringLiteral("date")).toString();
+        const QString t = s.value(QStringLiteral("time")).toString();
+        if (d == date && !t.isEmpty() && t == time) {
+            CalendarEvent e;
+            e.id = s.value(QStringLiteral("id")).toInt();
+            e.date = d;
+            e.time = t;
+            e.title = s.value(QStringLiteral("title")).toString();
+            e.detail = s.value(QStringLiteral("detail")).toString();
+            result.append(e);
+        }
+    }
+    s.endArray();
+    return result;
+}
+
+QList<CalendarEvent> EventStore::allDayEvents(const QString& date) const {
+    QList<CalendarEvent> result;
+    QSettings s(configPath_, QSettings::IniFormat);
+    const int count = s.beginReadArray(QStringLiteral("events"));
+    for (int i = 0; i < count; ++i) {
+        s.setArrayIndex(i);
+        const QString d = s.value(QStringLiteral("date")).toString();
+        const QString t = s.value(QStringLiteral("time")).toString();
+        if (d == date && t.isEmpty()) {
+            CalendarEvent e;
+            e.id = s.value(QStringLiteral("id")).toInt();
+            e.date = d;
+            e.time = t;
+            e.title = s.value(QStringLiteral("title")).toString();
+            e.detail = s.value(QStringLiteral("detail")).toString();
+            result.append(e);
+        }
+    }
+    s.endArray();
+    return result;
 }
 
 CalendarEvent EventStore::add(const QString& date, const QString& time,

@@ -8,6 +8,7 @@
 
 #include <QDate>
 #include <QList>
+#include <QSet>
 #include <QString>
 
 namespace w10de::calendar {
@@ -36,6 +37,15 @@ int daysInMonth(int year, int month);
 
 // ---- 事件存储 ----
 
+// 提醒判定（静态可测）：从 events（当天列表）筛出时间匹配且未提醒过的事件，
+// 并写入 notified 集合去重。全天事件（time 空）不在此列（由调用方启动时
+// 单独提醒一次）。
+// 审查 S1：去重键为 "date|time|id"（QString）——事件改期（含跨天）后时间
+// 变化 → 新键 → 会重新提醒；纯 id 键会使改期事件当天不再提醒。
+QList<CalendarEvent> dueEvents(const QList<CalendarEvent>& events,
+                               const QString& nowTime,
+                               QSet<QString>* notified);
+
 class EventStore {
 public:
     // configPathOverride 非空时注入（selftest 隔离）。
@@ -45,6 +55,11 @@ public:
 
     // 当天事件（按时间排序，全天在前）。
     QList<CalendarEvent> eventsForDate(const QString& date) const;
+    // 精确时间匹配（date + HH:mm 相等；全天事件 time 为空不在此列）。
+    QList<CalendarEvent> eventsAtTime(const QString& date,
+                                      const QString& time) const;
+    // 当天全天事件（time 为空；启动时提醒用）。
+    QList<CalendarEvent> allDayEvents(const QString& date) const;
     // 当月所有事件日期集合（"yyyy-MM-dd" 去重排序——月视图标记点）。
     QStringList monthDates(int year, int month) const;
 

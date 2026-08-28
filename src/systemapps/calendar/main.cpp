@@ -10,6 +10,7 @@
 #include <QPixmap>
 #include <QTemporaryDir>
 #include <QTextStream>
+#include <QTime>
 #include <QWidget>
 
 #include <cstdio>
@@ -122,20 +123,146 @@ int runSelfTest() {
         w10de::calendar::CalendarEvent empty = e1;
         empty.title = QStringLiteral("   ");
         if (store.update(empty)) return fail(QStringLiteral("空标题应被拒绝"));
-        // 审查 M4：损坏 INI 容错（读侧不崩溃）。
-        {
-            QFile bad(cfg);
-            if (bad.open(QIODevice::WriteOnly)) {
-                bad.write("\xff\xfe garbage \x00\x01");
-                bad.close();
-            }
-            if (!store.eventsForDate(QStringLiteral("2026-08-27")).isEmpty()) {
-                return fail(QStringLiteral("损坏配置读侧未容错"));
-            }
+        // 提醒查询：eventsAtTime / allDayEvents。
+        // （此刻 8/27 仅剩改期后的 e1 = 16:00；全天 e2 已删除。）
+        if (store.eventsAtTime(QStringLiteral("2026-08-27"),
+                               QStringLiteral("16:00")).size() != 1
+                || store.eventsAtTime(QStringLiteral("2026-08-27"),
+                                      QStringLiteral("14:30")).size() != 0
+                || store.eventsAtTime(QStringLiteral("2026-08-27"),
+                                      QStringLiteral("09:00")).size() != 0) {
+            return fail(QStringLiteral("eventsAtTime 查询错误"));
+        }
+        if (store.allDayEvents(QStringLiteral("2026-08-27")).size() != 0) {
+            return fail(QStringLiteral("allDayEvents 应无全天事件（已删）"));
+        }
+        // 重新添加全天事件：allDayEvents 命中、准点查询不命中。
+        store.add(QStringLiteral("2026-08-27"), QString(),
+                  QStringLiteral("全天新事项"), QString());
+        if (store.allDayEvents(QStringLiteral("2026-08-27")).size() != 1) {
+            return fail(QStringLiteral("allDayEvents 未返回全天事件"));
+        }
+        if (store.eventsAtTime(QStringLiteral("2026-08-27"), QString()).size()
+                != 0) {
+            return fail(QStringLiteral("准点查询不应含全天事件"));
         }
         out << "OK event-store\n";
     }
+
+    // 2b) 审查 M4：损坏 INI 容错（读侧不崩溃；放最后——会破坏配置）。
+    {
+        QTemporaryDir tmp;
+        if (!tmp.isValid()) return fail(QStringLiteral("临时目录创建失败"));
+        const QString cfg = tmp.path() + QStringLiteral("/cal.ini");
+        w10de::calendar::EventStore store(cfg);
+        store.add(QStringLiteral("2026-08-27"), QStringLiteral("10:00"),
+                  QStringLiteral("x"), QString());
+        QFile bad(cfg);
+        if (bad.open(QIODevice::WriteOnly)) {
+            bad.write("\xff\xfe garbage \x00\x01");
+            bad.close();
+        }
+        if (!store.eventsForDate(QStringLiteral("2026-08-27")).isEmpty()) {
+            return fail(QStringLiteral("损坏配置读侧未容错"));
+        }
+        out << "OK corrupt-config\n";
+    }
+
+    // 3) 提醒判定（静态可测）：时间匹配 + 去重 + 全天排除。
+    {
+        using w10de::calendar::CalendarEvent;
+        using w10de::calendar::dueEvents;
+        QList<CalendarEvent> events;
+        auto mk = [&events](int id, const QString& time) {
+            CalendarEvent e;
+            e.id = id;
+            e.time = time;
+            e.title = QStringLiteral("t%1").arg(id);
+            events.append(e);
+        };
+        mk(1, QStringLiteral("10:00"));
+        mk(2, QStringLiteral("10:00"));
+        mk(3, QStringLiteral("11:00"));
+        mk(4, QString());  // 全天——不应被 dueEvents 返回
+        QSet<QString> notified;
+        // 第一次：10:00 两条都到期。
+        auto due = dueEvents(events, QStringLiteral("10:00"), &notified);
+        if (due.size() != 2 || due[0].id != 1 || due[1].id != 2) {
+            return fail(QStringLiteral("首轮到期事件错误"));
+        }
+        // 第二次（同分钟）：已提醒的 10:00 不重复。
+        due = dueEvents(events, QStringLiteral("10:00"), &notified);
+        if (!due.isEmpty()) {
+            return fail(QStringLiteral("同分钟重复提醒未去重"));
+        }
+        // 11:00 到期；全天 4 号永不被返回。
+        due = dueEvents(events, QStringLiteral("11:00"), &notified);
+        if (due.size() != 1 || due[0].id != 3) {
+            return fail(QStringLiteral("11:00 到期事件错误"));
+        }
+        due = dueEvents(events, QStringLiteral("09:00"), &notified);
+        if (!due.isEmpty()) {
+            return fail(QStringLiteral("时间不匹配不应提醒"));
+        }
+        // 审查 S1：同 id 改期（时间变化）→ 新去重键 → 应重新提醒。
+        CalendarEvent moved = events[0];  // id=1，原 10:00
+        moved.time = QStringLiteral("12:00");
+        due = dueEvents(QList<CalendarEvent>{moved},
+                        QStringLiteral("12:00"), &notified);
+        if (due.size() != 1 || due[0].id != 1) {
+            return fail(QStringLiteral("改期事件未重新提醒"));
+        }
+        // 改期后原时间键仍去重（旧键保留）。
+        due = dueEvents(events, QStringLiteral("10:00"), &notified);
+        if (!due.isEmpty()) {
+            return fail(QStringLiteral("改期后原时间不应再提醒"));
+        }
+        out << "OK due-events\n";
+    }
     out << "SELFTEST PASS\n";
+    return 0;
+}
+
+int runReminderTest() {
+    // 端到端提醒验证：注入临时配置 + 今天当前分钟（及前 1 分钟容差）事件 →
+    // 构造窗口 → 构造器立即 checkReminders → 断言提醒已触发（降级路径状态
+    // 提示）。审查 M3：同时放当前分钟与前 1 分钟两个事件，消除跨分钟竞态。
+    using w10de::calendar::CalendarEvent;
+    using w10de::calendar::CalendarWindow;
+    using w10de::calendar::EventStore;
+    QTemporaryDir tmp;
+    if (!tmp.isValid()) {
+        std::fprintf(stderr, "REMINDER TEST FAIL: tmp\n");
+        return 1;
+    }
+    const QString cfg = tmp.path() + QStringLiteral("/cal.ini");
+    EventStore store(cfg);
+    const QDate today = QDate::currentDate();
+    const QString date = today.toString(QStringLiteral("yyyy-MM-dd"));
+    const QString nowTime = QTime::currentTime().toString(QStringLiteral("HH:mm"));
+    const QString prevMinute = QTime::currentTime()
+        .addSecs(-60).toString(QStringLiteral("HH:mm"));
+    const CalendarEvent e1 = store.add(date, nowTime,
+                                       QStringLiteral("提醒测试-当前分钟"),
+                                       QString());
+    const CalendarEvent e2 = store.add(date, prevMinute,
+                                       QStringLiteral("提醒测试-前一分钟"),
+                                       QString());
+    if (e1.id == 0 || e2.id == 0) {
+        std::fprintf(stderr, "REMINDER TEST FAIL: add\n");
+        return 1;
+    }
+    qputenv("W10DE_CALENDAR_CONFIG", cfg.toUtf8());
+    CalendarWindow window;
+    window.show();
+    QApplication::processEvents();
+    qunsetenv("W10DE_CALENDAR_CONFIG");
+    if (!window.hasReminderShown()) {
+        std::fprintf(stderr, "REMINDER TEST FAIL: 未触发提醒\n");
+        return 1;
+    }
+    std::printf("REMINDER TEST OK (now=%s prev=%s)\n",
+                qPrintable(nowTime), qPrintable(prevMinute));
     return 0;
 }
 
@@ -162,15 +289,20 @@ int main(int argc, char* argv[]) {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     QString renderPath;
     bool selftest = false;
+    bool reminderTest = false;
     for (int i = 1; i < argc; ++i) {
         if (qstrcmp(argv[i], "--selftest") == 0) {
             selftest = true;
+            qputenv("QT_QPA_PLATFORM", "offscreen");
+        } else if (qstrcmp(argv[i], "--reminder-test") == 0) {
+            reminderTest = true;
             qputenv("QT_QPA_PLATFORM", "offscreen");
         } else if (qstrcmp(argv[i], "--render") == 0 && i + 1 < argc) {
             renderPath = QString::fromLocal8Bit(argv[++i]);
             qputenv("QT_QPA_PLATFORM", "offscreen");
         } else if (qstrcmp(argv[i], "--help") == 0) {
-            std::printf("Usage: w10calendar [--selftest] [--render <png>]\n");
+            std::printf("Usage: w10calendar [--selftest] [--reminder-test]"
+                        " [--render <png>]\n");
             return 0;
         } else {
             std::fprintf(stderr, "w10calendar: unknown option: %s\n", argv[i]);
@@ -181,6 +313,10 @@ int main(int argc, char* argv[]) {
     if (selftest) {
         QApplication app(argc, argv);
         return runSelfTest();
+    }
+    if (reminderTest) {
+        QApplication app(argc, argv);
+        return runReminderTest();
     }
     if (!renderPath.isEmpty()) {
         QApplication app(argc, argv);

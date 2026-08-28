@@ -1,13 +1,20 @@
-// CalendarWindow 实现（可选拓展 E11：月视图 + 事件 CRUD）。
+// CalendarWindow 实现（可选拓展 E11：月视图 + 事件 CRUD + 提醒）。
 //
 // 月历网格复用静态函数 monthCells（42 格）；日期按钮点击选中 → 右侧事件
 // 列表；事件对话框（标题/时间/说明）由新建/编辑触发。
+// 提醒：每分钟检查当天事件（准点 + 全天启动一次），libnotify 优先，
+// 无通知服务时应用内状态提示 + 提示音降级。
 
 #include "systemapps/calendar/calendarwindow.h"
 
+#include <QApplication>
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QDate>
+#include <QDBusConnection>
+#include <QDBusConnectionInterface>
+#include <QDBusInterface>
+#include <QDBusReply>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFormLayout>
@@ -19,7 +26,9 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSet>
+#include <QTime>
 #include <QTimeEdit>
+#include <QTimer>
 #include <QVBoxLayout>
 
 namespace w10de::calendar {
@@ -45,6 +54,32 @@ const char* kDayToday =
     "QPushButton:hover{background:#333;}"
     "QPushButton:checked{background:#3D6FB4;color:#FFF;"
     "border-color:#3DDC84;}";  // 今天选中：蓝底 + 绿描边（描边不被覆盖）
+
+// libnotify（org.freedesktop.Notifications）系统通知；服务不可用返回 false
+//（调用方降级应用内提示）。审查 M1：可用性每次重查（通知服务晚于应用就绪
+// 或运行中重启都能恢复——静态缓存会永久锁死在降级路径）。调用收紧超时。
+bool sendSystemNotification(const QString& appName, const QString& title,
+                            const QString& body) {
+    QDBusConnection conn = QDBusConnection::sessionBus();
+    if (!conn.isConnected()
+            || !conn.interface()->isServiceRegistered(
+                QStringLiteral("org.freedesktop.Notifications"))) {
+        return false;
+    }
+    QDBusInterface iface(QStringLiteral("org.freedesktop.Notifications"),
+                         QStringLiteral("/org/freedesktop/Notifications"),
+                         QStringLiteral("org.freedesktop.Notifications"),
+                         conn);
+    if (!iface.isValid()) {
+        return false;
+    }
+    iface.setTimeout(1000);
+    QDBusReply<uint> reply = iface.call(
+        QStringLiteral("Notify"), appName, 0u, QString(),
+        title, body, QStringList(), QVariantMap(), 5000);
+    return reply.isValid();
+}
+
 }  // namespace
 
 CalendarWindow::CalendarWindow(QWidget* parent) : QWidget(parent) {
@@ -151,6 +186,13 @@ CalendarWindow::CalendarWindow(QWidget* parent) : QWidget(parent) {
     root->addWidget(statusLabel_);
 
     setStyleSheet(QStringLiteral("QWidget{background:#2D2D2D;}"));
+    // 提醒定时器：每分钟检查当天事件（启动时立即检查一次——全天事件）。
+    reminderTimer_ = new QTimer(this);
+    reminderTimer_->setInterval(60000);
+    connect(reminderTimer_, &QTimer::timeout,
+            this, &CalendarWindow::checkReminders);
+    reminderTimer_->start();
+    checkReminders();
     rebuildAll();
 }
 
@@ -160,6 +202,48 @@ int CalendarWindow::cellCount() const {
 
 int CalendarWindow::eventCount() const {
     return eventList_->count();
+}
+
+bool CalendarWindow::hasReminderShown() const {
+    return reminderShown_;
+}
+
+void CalendarWindow::checkReminders() {
+    const QDate today = QDate::currentDate();
+    const QString date = today.toString(QStringLiteral("yyyy-MM-dd"));
+    // 1) 全天事件：每天首次检查提醒一次（审查 S2：按日期记录，跨午夜自动
+    // 复位——之前 bool 标志在应用跨午夜运行时第二天全天事件失效）。
+    if (allDayNotifiedDate_ != date) {
+        allDayNotifiedDate_ = date;
+        const auto allDay = store_.allDayEvents(date);
+        for (const CalendarEvent& e : allDay) {
+            notifyEvent(e, true);
+        }
+    }
+    // 2) 准点事件：时间匹配 + 运行期去重（键含 date|time|id）。
+    const QString nowTime = QTime::currentTime().toString(QStringLiteral("HH:mm"));
+    const auto due = dueEvents(store_.eventsForDate(date), nowTime,
+                               &notifiedIds_);
+    for (const CalendarEvent& e : due) {
+        notifyEvent(e, false);
+    }
+}
+
+void CalendarWindow::notifyEvent(const CalendarEvent& e, bool allDay) {
+    const QString title = allDay ? QStringLiteral("全天事件")
+                                 : QStringLiteral("事件提醒");
+    const QString body = allDay
+        ? e.title
+        : QStringLiteral("%1  %2").arg(e.time, e.title);
+    reminderShown_ = true;
+    if (sendSystemNotification(QStringLiteral("w10calendar"), title, body)) {
+        // 系统通知成功：状态栏低调提示（不打扰）。
+        setStatus(QStringLiteral("已提醒：%1").arg(body), true);
+        return;
+    }
+    // 降级：应用内状态提示（高亮） + 提示音。
+    QApplication::beep();
+    setStatus(QStringLiteral("提醒：%1").arg(body), false);
 }
 
 void CalendarWindow::onPrevMonth() {
